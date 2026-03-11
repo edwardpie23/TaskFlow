@@ -952,14 +952,14 @@ Current time of day: ${timeOfDayLabel()}
 
 This may be a raw sentence, not a clean task title. Extract all task details.
 Reply with ONLY a JSON object, no explanation, no markdown:
-{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","notes":"1-2 short actionable bullet notes to help complete this task, e.g. '• Check X first\\n• Remember to Y'","reason":"one short sentence"}
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","notes":"a brief expansion of exactly what the user said — include key details like time, purpose, and context. Do NOT add suggestions, advice, or anything the user did not mention.","reason":"one short sentence"}
 
 Rules:
 - title: convert natural language to a short action title (e.g. "I want to walk the dog tonight" → "Walk the dog")
 - urgency: how time-sensitive does this sound?
 - preferredTime: infer from context clues like "tonight", "after work", "in the morning"
 - category: pick the most fitting from Work, Personal, Health, Finance, Home, Learning, Social, Other
-- notes: 1-2 brief, practical reminder notes based on the description (use \\n to separate them)`;
+- notes: only expand on what the user actually said (time, purpose, location, context). Do not add tips, reminders, or suggestions they didn't mention.`;
         const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
         const cleaned = raw.replace(/```json|```/g,"").trim();
         const start = cleaned.indexOf("{");
@@ -1383,7 +1383,7 @@ function App() {
       try {
         const prompt = `Extract task details from this voice input: "${transcript}"
 Reply with ONLY a JSON object, no markdown:
-{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","notes":"1-2 short actionable reminder notes based on the description, or empty string","recurrence":null}
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","notes":"a brief expansion of exactly what the user said — include key details like time, purpose, and context. Do NOT add suggestions or anything the user did not mention. Empty string if nothing specific was said.","recurrence":null}
 
 For the recurrence field, detect any repetition in the speech:
 - null → no repetition mentioned
