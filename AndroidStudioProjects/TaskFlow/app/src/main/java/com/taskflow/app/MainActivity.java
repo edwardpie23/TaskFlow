@@ -18,6 +18,8 @@ import android.webkit.WebViewClient;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+
+import com.taskflow.app.BuildConfig;
 import androidx.core.content.ContextCompat;
 import androidx.webkit.WebViewAssetLoader;
 
