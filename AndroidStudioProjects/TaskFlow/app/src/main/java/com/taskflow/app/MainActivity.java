@@ -184,7 +184,7 @@ public class MainActivity extends AppCompatActivity {
                 request.deny();
             }
         });
-        WebView.setWebContentsDebuggingEnabled(true);
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
 
