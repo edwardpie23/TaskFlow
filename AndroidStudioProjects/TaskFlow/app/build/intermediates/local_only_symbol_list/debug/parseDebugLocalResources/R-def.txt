@@ -1,0 +1,14 @@
+R_DEF: Internal format may change without notice
+local
+color accent
+color bg_dark
+color white
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+id webview
+layout activity_main
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+style Theme.TaskFlow
+xml network_security_config

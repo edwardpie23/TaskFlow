@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"/>
+  <title>TaskFlow</title>
+  <meta name="theme-color" content="#f5f5f5" id="theme-color-meta"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{height:100%;width:100%;overflow:hidden;}
+    #root{height:100%;width:100%;}
+    body{background:#f5f5f5;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+    /* CSS variables set here so ALL elements inherit them */
+    :root {
+      --bg:#f5f5f5; --header-bg:#ffffff; --card-bg:#ffffff; --chat-bg:#f9f9f9;
+      --bubble-bg:#efefef; --input-bg:#f0f0f0; --btn-bg:#ebebeb; --tag-bg:#ede9ff; --border:#d8d8d8;
+      --text:#111111; --text-muted:#666666; --accent:#6355e8;
+      --fresh:#059669; --aging:#d97706; --stale:#d9622a; --crit:#dc2626;
+    }
+    body.dark {
+      --bg:#000000; --header-bg:#111111; --card-bg:#1a1a1a; --chat-bg:#0d0d0d;
+      --bubble-bg:#222222; --input-bg:#1e1e1e; --btn-bg:#222222; --tag-bg:#1a1a2e; --border:#333333;
+      --text:#ffffff; --text-muted:#aaaaaa; --accent:#a99cff;
+      --fresh:#4eda9e; --aging:#fcd34d; --stale:#fb923c; --crit:#fc8181;
+    }
+    body, body * { color: inherit; }
+    input, textarea, select { color: var(--text) !important; background: var(--input-bg) !important; }
+    option { background: var(--card-bg) !important; color: var(--text) !important; }
+
+    #splash{
+      position:fixed;inset:0;background:#0f0f14;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+      z-index:9999;transition:opacity .5s ease;
+    }
+    #splash-icon{
+      width:72px;height:72px;border-radius:22px;background:#7c6ef5;
+      display:flex;align-items:center;justify-content:center;font-size:36px;
+      box-shadow:0 8px 32px #7c6ef566;
+    }
+    #splash h1{font-family:sans-serif;font-size:28px;font-weight:800;color:#111111;letter-spacing:-.5px;}
+    #splash p{font-family:sans-serif;font-size:13px;color:#666666;}
+    #splash-bar{width:140px;height:3px;background:#dddddd;border-radius:99px;overflow:hidden;margin-top:4px;}
+    #splash-fill{height:100%;background:#7c6ef5;border-radius:99px;width:0%;transition:width 1.5s ease;}
+    @keyframes spin{from{transform:rotate(0deg) translateY(-50%)}to{transform:rotate(360deg) translateY(-50%)}}
+
+    #error-screen{
+      display:none;position:fixed;inset:0;background:#0f0f14;
+      flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:32px;
+      z-index:9998;
+    }
+    #error-screen h2{font-family:sans-serif;font-size:20px;color:#ef4444;font-weight:700;}
+    #error-screen p{font-family:sans-serif;font-size:13px;color:#6b6b88;text-align:center;line-height:1.6;}
+    #retry-btn{
+      background:#7c6ef5;color:#fff;border:none;border-radius:12px;
+      padding:12px 28px;font-size:14px;font-weight:700;font-family:sans-serif;cursor:pointer;
+      margin-top:8px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="splash">
+  <div id="splash-icon">✦</div>
+  <h1>TaskFlow</h1>
+  <p>AI-powered task manager</p>
+  <div id="splash-bar"><div id="splash-fill" id="splash-fill"></div></div>
+</div>
+
+<div id="error-screen">
+  <div style="font-size:40px">📡</div>
+  <h2>Loading failed</h2>
+  <p>TaskFlow needs internet on first launch to load its resources. Please check your connection and try again.</p>
+  <button id="retry-btn" onclick="location.reload()">Retry</button>
+</div>
+
+<div id="root"></div>
+
+<script>
+  // Start progress bar animation
+  setTimeout(function(){ document.getElementById('splash-fill').style.width='85%'; }, 50);
+
+  var LOAD_TIMEOUT = 20000; // 20 seconds
+  var loadTimer = setTimeout(function(){
+    document.getElementById('splash').style.display = 'none';
+    document.getElementById('error-screen').style.display = 'flex';
+  }, LOAD_TIMEOUT);
+
+  function hideSplash(){
+    clearTimeout(loadTimer);
+    var fill = document.getElementById('splash-fill');
+    if(fill) fill.style.width = '100%';
+    setTimeout(function(){
+      var s = document.getElementById('splash');
+      if(s){ s.style.opacity='0'; setTimeout(function(){ if(s) s.remove(); }, 500); }
+    }, 300);
+  }
+
+  // Global error handler
+  window.addEventListener('error', function(e){
+    console.error('Global error:', e.message, e.filename, e.lineno);
+  });
+</script>
+
+<!-- Load React 18 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+
+<!-- Verify React loaded before Babel -->
+<script>
+  if (!window.React || !window.ReactDOM) {
+    document.getElementById('splash').style.display = 'none';
+    document.getElementById('error-screen').style.display = 'flex';
+    document.getElementById('error-screen').querySelector('p').textContent =
+      'Could not load React library. Please check your internet connection and try again.';
+  }
+</script>
+
+<!-- Babel standalone JSX compiler -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+<!-- The full TaskFlow app as JSX, compiled on-device by Babel -->
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2, 10);
+const URGENCY_LABELS = ["low", "medium", "high", "critical"];
+const URGENCY = { low: 1, medium: 2, high: 3, critical: 4 };
+const CATEGORIES = ["Work", "Personal", "Health", "Finance", "Home", "Learning", "Social", "Other"];
+
+// Card color palette
+const CARD_COLORS = [
+  { label: "Default", value: null },
+  { label: "Rose",    value: "#ff6b8a" },
+  { label: "Orange",  value: "#ff8c42" },
+  { label: "Amber",   value: "#f5c842" },
+  { label: "Lime",    value: "#7ecf4a" },
+  { label: "Teal",    value: "#3ecfb0" },
+  { label: "Sky",     value: "#42b8f5" },
+  { label: "Violet",  value: "#9b6ef5" },
+  { label: "Pink",    value: "#f56ec0" },
+];
+
+function staleness(task) {
+  const hrs = (Date.now() - (task.lastUpdated || task.createdAt)) / 3600000;
+  if (hrs > 72) return "critical";
+  if (hrs > 24) return "stale";
+  if (hrs > 6)  return "aging";
+  return "fresh";
+}
+function stalenessColor(s) {
+  return { fresh:"var(--fresh)", aging:"var(--aging)", stale:"var(--stale)", critical:"var(--crit)" }[s];
+}
+function timeOfDayLabel() {
+  const h = new Date().getHours();
+  if (h < 6)  return "night";
+  if (h < 12) return "morning";
+  if (h < 17) return "afternoon";
+  if (h < 21) return "evening";
+  return "night";
+}
+
+function getNextOccurrence(recurrence) {
+  if (!recurrence) return null;
+  const now = new Date();
+  if (recurrence.type === "daily") {
+    const n = new Date(now); n.setDate(n.getDate()+1); n.setHours(6,0,0,0); return n.getTime();
+  }
+  if (recurrence.type === "weekly") {
+    for (let i = 1; i <= 14; i++) {
+      const c = new Date(now); c.setDate(c.getDate()+i); c.setHours(6,0,0,0);
+      if ((recurrence.days||[]).includes(c.getDay())) return c.getTime();
+    }
+  }
+  if (recurrence.type === "monthly") {
+    const target = recurrence.day || 1;
+    const c = new Date(now); c.setDate(c.getDate()+1); c.setHours(6,0,0,0);
+    for (let i = 0; i < 60; i++) {
+      if (c.getDate() === target) return c.getTime();
+      c.setDate(c.getDate()+1);
+    }
+  }
+  if (recurrence.type === "interval") {
+    const n = new Date(now); n.setDate(n.getDate()+(recurrence.days||7)); n.setHours(6,0,0,0); return n.getTime();
+  }
+  return null;
+}
+const REC_DAY_NAMES = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+
+// ── AI ────────────────────────────────────────────────────────────────────────
+// ── Groq API key — get your FREE key at console.groq.com → API Keys ──────────
+const GROQ_API_KEY = "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";
+
+async function askClaude(messages, system) {
+  if (!GROQ_API_KEY || GROQ_API_KEY === "YOUR_GROQ_KEY_HERE") {
+    return "⚠️ No API key set. Open index.html and replace YOUR_GROQ_KEY_HERE with your free key from console.groq.com";
+  }
+
+  const systemMsg = {
+    role: "system",
+    content: system || "You are a focused productivity assistant. Help users complete tasks efficiently, suggest next actions, give time estimates, and break down complex tasks. Keep answers concise (2-4 sentences). Factor in time of day, urgency, and task dependencies."
+  };
+  const payload = JSON.stringify({
+    model: "llama-3.3-70b-versatile",
+    messages: [systemMsg, ...messages],
+    max_tokens: 1200,
+    temperature: 0.7,
+  });
+
+  try {
+    // ── On Android: use Java bridge (bypasses CORS completely) ──────────────
+    if (window.Android && window.Android.groqPost) {
+      // Trim key to remove any accidental whitespace
+      const cleanKey = GROQ_API_KEY.trim();
+      const resultStr = window.Android.groqPost(cleanKey, payload);
+      let result;
+      try { result = JSON.parse(resultStr); }
+      catch(e) { return "❌ Bridge parse error: " + resultStr; }
+
+      if (result.status < 200 || result.status >= 300) {
+        // Show full error detail to help debug
+        const errMsg = result.body?.error?.message || JSON.stringify(result.body);
+        return "❌ API Error " + result.status + ": " + errMsg;
+      }
+      return result.body?.choices?.[0]?.message?.content || "No response.";
+    }
+
+    // ── On browser/PC: use fetch() ──────────────────────────────────────────
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + GROQ_API_KEY,
+      },
+      body: payload,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return "❌ API Error " + res.status + ": " + err;
+    }
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || "No response.";
+
+  } catch(e) {
+    return "❌ Error: " + e.message;
+  }
+}
+
+// ── Suggestion pool ───────────────────────────────────────────────────────────
+const POOL = {
+  Health: [
+    { title: "Take a 20-min walk outside", description: "Boosts mood, energy, and cardiovascular health.", urgency: "medium", preferredTime: "afternoon" },
+    { title: "Drink 8 glasses of water today", description: "Track hydration throughout the day.", urgency: "medium", preferredTime: "anytime" },
+    { title: "10 minutes of morning stretching", description: "Loosen tight muscles and improve posture.", urgency: "low", preferredTime: "morning" },
+    { title: "Meditate for 5 minutes", description: "A simple breathing exercise to reduce stress.", urgency: "low", preferredTime: "morning" },
+    { title: "Cook a healthy meal at home", description: "Avoid processed food for at least one meal today.", urgency: "medium", preferredTime: "evening" },
+    { title: "Set a consistent bedtime tonight", description: "Same sleep time each night regulates your cycle.", urgency: "high", preferredTime: "night" },
+    { title: "15 mins of strength training", description: "Push-ups, squats, lunges — no equipment needed.", urgency: "medium", preferredTime: "morning" },
+    { title: "Schedule a doctor check-up", description: "Book your annual preventative visit.", urgency: "medium", preferredTime: "anytime" },
+    { title: "No screens 30 min before bed", description: "Reduces blue light for deeper sleep.", urgency: "medium", preferredTime: "night" },
+    { title: "Eat fruit or veggies with every meal", description: "Easy way to hit your daily nutrition targets.", urgency: "low", preferredTime: "anytime" },
+    { title: "Take a 5-min breathing break", description: "Box breathing: 4s in, hold, 4s out. Resets your nervous system.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Go to bed 30 min earlier tonight", description: "Even 30 minutes more sleep compounds over a week.", urgency: "medium", preferredTime: "night" },
+    { title: "Do 20 minutes of yoga", description: "Improves flexibility, balance, and mental calm.", urgency: "low", preferredTime: "morning" },
+    { title: "Prep healthy snacks for the week", description: "Cut fruit, portion nuts — removes friction from eating well.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Take a cold shower", description: "Boosts alertness, mood, and circulation.", urgency: "low", preferredTime: "morning" },
+  ],
+  Learning: [
+    { title: "Read for 20 minutes", description: "Any book or long-form content. Consistency beats binge-reading.", urgency: "low", preferredTime: "evening" },
+    { title: "Watch one educational video", description: "YouTube, Coursera, Khan Academy — follow your curiosity.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Practice a skill for 25 mins", description: "Coding, language, music — one focused Pomodoro session.", urgency: "medium", preferredTime: "morning" },
+    { title: "Write a short journal entry", description: "Reflect on what you learned today. Writing solidifies memory.", urgency: "low", preferredTime: "evening" },
+    { title: "Listen to an educational podcast", description: "Great for commutes or household chores.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Review your notes from this week", description: "Spaced repetition — revisit recently studied material.", urgency: "medium", preferredTime: "morning" },
+    { title: "Learn 5 new vocabulary words", description: "Great for language learning or expanding your English.", urgency: "low", preferredTime: "morning" },
+    { title: "Do a flashcard session", description: "Anki or Quizlet — active recall beats re-reading.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Outline a topic you want to master", description: "Break a complex subject into a personal learning roadmap.", urgency: "low", preferredTime: "evening" },
+    { title: "Teach someone a concept you know", description: "Teaching is the best way to solidify your understanding.", urgency: "low", preferredTime: "anytime" },
+    { title: "Write a summary of a chapter", description: "Summarising forces you to engage actively with content.", urgency: "low", preferredTime: "evening" },
+    { title: "Set a learning goal for this month", description: "Define one skill or topic to make meaningful progress on.", urgency: "medium", preferredTime: "morning" },
+    { title: "Read one Wikipedia deep-dive", description: "Pick any topic you're curious about and follow the links.", urgency: "low", preferredTime: "anytime" },
+    { title: "Practice mental math for 10 mins", description: "Keeps your brain sharp and improves number intuition.", urgency: "low", preferredTime: "morning" },
+    { title: "Watch a documentary tonight", description: "Learning through narrative is effortless and memorable.", urgency: "low", preferredTime: "evening" },
+  ],
+  Personal: [
+    { title: "Reach out to a friend you miss", description: "A quick text or call — relationships need intentional effort.", urgency: "low", preferredTime: "evening" },
+    { title: "Spend 30 mins on a hobby", description: "Do something purely for enjoyment — rest matters too.", urgency: "low", preferredTime: "evening" },
+    { title: "Declutter one small space", description: "A drawer, shelf, or desktop. Small wins reduce mental clutter.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Plan your week ahead", description: "Review goals, block time for priorities, set intentions.", urgency: "medium", preferredTime: "morning" },
+    { title: "Write 3 things you're grateful for", description: "A quick daily practice that genuinely shifts your mood.", urgency: "low", preferredTime: "morning" },
+    { title: "Take a full 1-hour break from work", description: "Real breaks away from screens restore focus and prevent burnout.", urgency: "medium", preferredTime: "afternoon" },
+    { title: "Go outside for fresh air — no phone", description: "10 minutes of phone-free outdoor time reduces anxiety.", urgency: "low", preferredTime: "afternoon" },
+    { title: "Write a letter to your future self", description: "Clarifies your values and what you're working toward.", urgency: "low", preferredTime: "evening" },
+    { title: "Do one thing you've been avoiding", description: "Procrastinated tasks drain more energy than doing them.", urgency: "high", preferredTime: "morning" },
+    { title: "Cook or eat a meal mindfully", description: "No screens — just focus on the food and how you feel.", urgency: "low", preferredTime: "evening" },
+  ],
+};
+
+function initVisible(cat) {
+  return POOL[cat].slice(0, 5).map((s, i) => ({ ...s, category: cat, _poolIdx: i, _uid: uid() }));
+}
+
+// ── Shared styles ─────────────────────────────────────────────────────────────
+const iconBtn = {
+  background: "var(--btn-bg)", border: "1px solid var(--border)", borderRadius: 10,
+  width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center",
+  cursor: "pointer", fontSize: 16, color: "var(--text-muted)", transition: "all 0.15s", padding: 0,
+};
+const selectStyle = {
+  background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: 8,
+  padding: "10px 12px", color: "var(--text)", fontSize: 15, cursor: "pointer", fontFamily: "'DM Sans',sans-serif",
+};
+const inputStyle = {
+  background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: 10,
+  padding: "13px 15px", color: "var(--text)", fontSize: 16, fontFamily: "'DM Sans',sans-serif",
+  outline: "none", width: "100%", boxSizing: "border-box",
+};
+
+// Determine readable text color for a card color
+function textOnColor(hex) {
+  if (!hex) return null;
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return (r*299 + g*587 + b*114) / 1000 > 128 ? "#1a1a2e" : "#f0f0f8";
+}
+
+// ── TaskCard ──────────────────────────────────────────────────────────────────
+function TaskCard({ task, onUpdate, onDelete, onChat, onEdit, isDragging, isOver, isCompleted }) {
+  const age = staleness(task);
+  const ageColor = stalenessColor(age);
+  const [expanded, setExpanded] = useState(false);
+  const [aiInsight, setAiInsight] = useState(null);
+  const [aiInsightLoading, setAiInsightLoading] = useState(false);
+
+  // Stopwatch
+  const [totalElapsed, setTotalElapsed] = useState(0); // accumulated seconds from past sessions
+  const sessionStartRef = useRef(null);
+  const [, setTick] = useState(0); // triggers re-render each second
+  const tickTimerRef = useRef(null);
+
+  const currentElapsed = sessionStartRef.current
+    ? totalElapsed + Math.floor((Date.now() - sessionStartRef.current) / 1000)
+    : totalElapsed;
+  const fmtTime = (s) => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+  useEffect(() => () => clearInterval(tickTimerRef.current), []);
+
+  const cardColor = task.color || null;
+  const textColor = cardColor ? textOnColor(cardColor) : null;
+  const onCard      = textColor || "var(--text)";
+  const onCardMuted = cardColor ? textColor + "aa" : "var(--text-muted)";
+
+  const urgencyEmoji = { low:"🟢", medium:"🟡", high:"🟠", critical:"🔴" }[task.urgency];
+  const todIcon = { morning:"🌅", afternoon:"☀️", evening:"🌆", night:"🌙", anytime:"🔄" }[task.preferredTime||"anytime"];
+  const borderColor = isOver ? "var(--accent)" : cardColor ? cardColor : ageColor;
+
+  const handleCardClick = () => {
+    if (isCompleted) return;
+    const opening = !expanded;
+    setExpanded(opening);
+    if (opening) {
+      // Start stopwatch
+      sessionStartRef.current = Date.now();
+      tickTimerRef.current = setInterval(() => setTick(t => t + 1), 1000);
+    } else {
+      // Stop stopwatch and accumulate time
+      if (sessionStartRef.current) {
+        const secs = Math.floor((Date.now() - sessionStartRef.current) / 1000);
+        setTotalElapsed(prev => prev + secs);
+        sessionStartRef.current = null;
+      }
+      clearInterval(tickTimerRef.current);
+    }
+    // Fetch AI insight the first time card is opened
+    if (opening && !aiInsight && !aiInsightLoading) {
+      setAiInsightLoading(true);
+      const prompt = `Task: "${task.title}"
+Urgency: ${task.urgency} | Time: ${task.preferredTime||"anytime"} | Category: ${task.category||"General"}
+${task.description ? "Description: " + task.description : ""}
+
+Give ONE short, specific, actionable insight about this task in 1-2 sentences. Be direct and practical.`;
+      askClaude([{role:"user", content:prompt}], "You are a concise productivity coach. Give short, specific, actionable insights. No fluff.")
+        .then(result => { setAiInsight(result); setAiInsightLoading(false); })
+        .catch(() => setAiInsightLoading(false));
+    }
+  };
+
+  return (
+    <div
+      onClick={handleCardClick}
+      style={{
+        background: cardColor || "var(--card-bg)",
+        border: `1.5px solid ${borderColor}`,
+        borderLeft: `5px solid ${cardColor || ageColor}`,
+        borderRadius: 16,
+        padding: "16px 16px",
+        marginBottom: 12,
+        transition: "opacity .35s ease, box-shadow .2s, transform .1s",
+        opacity: isDragging ? 0.4 : isCompleted ? 0.55 : 1,
+        boxShadow: isOver
+          ? "0 0 0 2px var(--accent), 0 4px 20px #0003"
+          : cardColor ? `0 4px 18px ${cardColor}44`
+          : age==="critical" ? `0 0 16px ${ageColor}44`
+          : age==="stale"    ? `0 0 8px ${ageColor}22`
+          : "0 2px 8px #0001",
+        animation: !cardColor && age==="critical" ? "pulse 2.5s infinite" : "none",
+        cursor: isCompleted ? "default" : "pointer",
+        userSelect: "none",
+        position: "relative",
+      }}>
+
+      {/* ── Top row: checkbox + title + action buttons ── */}
+      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+        <input type="checkbox" checked={task.done}
+          onChange={e => onUpdate(task.id, { done: e.target.checked, lastUpdated: Date.now() })}
+          onClick={e => e.stopPropagation()}
+          style={{ accentColor: cardColor || "var(--accent)", width:20, height:20, flexShrink:0, cursor:"pointer" }} />
+
+        {/* Title — main focus */}
+        <span style={{
+          fontFamily:"'Syne',sans-serif", fontSize:17, fontWeight:700, flex:1,
+          color: task.done ? onCardMuted : onCard,
+          textDecoration: task.done ? "line-through" : "none",
+          lineHeight: 1.3,
+        }}>
+          {task.title}
+        </span>
+
+        {/* Right side buttons */}
+        <div style={{ display:"flex", gap:6, flexShrink:0 }} onClick={e=>e.stopPropagation()}>
+          {!isCompleted && (
+            <button onClick={e=>{e.stopPropagation();onChat(task);}}
+              style={{ ...iconBtn, background:"var(--accent)", color:"#fff", width:36, height:36 }}>✦</button>
+          )}
+          <button onClick={e=>{e.stopPropagation();onDelete(task.id);}}
+            style={{ ...iconBtn, color: cardColor ? textColor : "var(--crit)", width:36, height:36 }}>✕</button>
+        </div>
+      </div>
+
+      {/* ── Meta row: urgency · time · category · staleness ── */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:10, paddingLeft:32 }}>
+        <span style={{ fontSize:13, color:onCardMuted }}>{urgencyEmoji} {task.urgency}</span>
+        <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+        <span style={{ fontSize:13, color:onCardMuted }}>{todIcon} {task.preferredTime||"anytime"}</span>
+        {task.category && <>
+          <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+          <span style={{ fontSize:12, padding:"2px 8px", borderRadius:10,
+            background: cardColor ? "rgba(0,0,0,0.15)" : "var(--tag-bg)",
+            color: cardColor ? textColor : "var(--accent)", fontWeight:600 }}>{task.category}</span>
+        </>}
+        {task.dueDate && <>
+          <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+          <span style={{ fontSize:13, color:onCardMuted }}>📅 {new Date(task.dueDate).toLocaleDateString()}</span>
+        </>}
+        {!isCompleted && (
+          <span style={{ fontSize:11, padding:"2px 7px", borderRadius:20,
+            background: cardColor ? "rgba(0,0,0,0.18)" : ageColor+"22",
+            color: cardColor ? textColor : ageColor, fontWeight:700 }}>
+            {age==="critical" ? "⚠ critical" : age}
+          </span>
+        )}
+        {!expanded && totalElapsed > 0 && (
+          <>
+            <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+            <span style={{ fontSize:11, color:onCardMuted }}>⏱ {fmtTime(totalElapsed)}</span>
+          </>
+        )}
+        {task.recurrence && !isCompleted && (
+          <>
+            <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+            <span style={{ fontSize:11, color:"var(--accent)", fontWeight:600 }}>
+              🔁 {task.recurrence.type === "daily" ? "daily"
+                : task.recurrence.type === "weekly" ? REC_DAY_NAMES.filter((_,i)=>(task.recurrence.days||[]).includes(i)).join(" ")
+                : task.recurrence.type === "monthly" ? `day ${task.recurrence.day} monthly`
+                : task.recurrence.type === "interval" ? `every ${task.recurrence.days}d`
+                : "recurring"}
+            </span>
+          </>
+        )}
+        {isCompleted && task.recurrence && task.nextOccurrence && (
+          <>
+            <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+            <span style={{ fontSize:11, color:"var(--accent)", fontWeight:600 }}>
+              🔁 {new Date(task.nextOccurrence).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* ── Expanded panel ── */}
+      {expanded && !isCompleted && (
+        <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${cardColor?"rgba(0,0,0,0.15)":"var(--border)"}` }}
+          onClick={e=>e.stopPropagation()}>
+
+          {/* Stopwatch — running while expanded */}
+          <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:12,
+            padding:"7px 12px", borderRadius:10,
+            background: cardColor ? "rgba(0,0,0,0.12)" : "var(--accent)0d" }}>
+            <span style={{ fontSize:16 }}>⏱</span>
+            <span style={{ fontSize:15, fontWeight:700, color:"var(--accent)", fontFamily:"monospace" }}>
+              {fmtTime(currentElapsed)}
+            </span>
+            <span style={{ fontSize:11, color:onCardMuted }}>time on task</span>
+          </div>
+
+          {/* AI Insight — loads when card first opens */}
+          <div style={{ marginBottom:14, padding:"12px 14px",
+            background: cardColor ? "rgba(0,0,0,0.12)" : "var(--accent)11",
+            borderRadius:12, borderLeft:"3px solid var(--accent)" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"var(--accent)", marginBottom:5, letterSpacing:.5 }}>✦ AI INSIGHT</div>
+            {aiInsightLoading ? (
+              <div style={{ fontSize:14, color:"var(--text-muted)", fontStyle:"italic" }}>Thinking…</div>
+            ) : aiInsight ? (
+              <p style={{ fontSize:14, color:"var(--text)", lineHeight:1.6, margin:0 }}>{aiInsight}</p>
+            ) : (
+              <div style={{ fontSize:14, color:"var(--text-muted)", fontStyle:"italic" }}>No insight yet</div>
+            )}
+          </div>
+
+          {task.description && (
+            <p style={{ fontSize:14, color:onCardMuted, marginBottom:12, lineHeight:1.6, paddingLeft:2 }}>{task.description}</p>
+          )}
+
+          {/* Color picker */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:11, color:onCardMuted, fontWeight:700, letterSpacing:.5, marginBottom:7 }}>CARD COLOR</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {CARD_COLORS.map(c => (
+                <button key={c.label} title={c.label}
+                  onClick={()=>onUpdate(task.id,{color:c.value,lastUpdated:Date.now()})}
+                  style={{
+                    width: c.value ? 26 : 40, height:26, borderRadius: c.value ? "50%" : 8,
+                    background: c.value || "var(--btn-bg)",
+                    border: task.color===c.value ? "3px solid var(--accent)" : c.value ? "2px solid transparent" : "1px solid var(--border)",
+                    cursor:"pointer", outline:"none", padding:0,
+                    fontSize:10, color:"var(--text-muted)", fontFamily:"'DM Sans',sans-serif",
+                  }}>{!c.value?"none":""}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Edit button */}
+          <button
+            onClick={e=>{e.stopPropagation();onEdit(task);}}
+            style={{ background:"var(--btn-bg)", border:"1px solid var(--border)", borderRadius:10,
+              padding:"9px 18px", fontSize:14, fontWeight:600, color:"var(--accent)",
+              cursor:"pointer", fontFamily:"'DM Sans',sans-serif", width:"100%", marginBottom:10 }}>
+            ✏️ Edit this task
+          </button>
+
+          {/* Notes */}
+          <textarea placeholder="Notes…" value={task.notes||""}
+            onChange={e=>onUpdate(task.id,{notes:e.target.value,lastUpdated:Date.now()})}
+            style={{ ...inputStyle, minHeight:60, resize:"vertical",
+              marginBottom: task.aiSuggestion ? 10 : 0,
+              background: cardColor?"rgba(0,0,0,0.1)":"var(--input-bg)",
+              color:onCard, borderColor: cardColor?"rgba(0,0,0,0.2)":"var(--border)" }} />
+
+          {/* AI suggestion */}
+          {task.aiSuggestion && (
+            <div style={{ padding:"10px 13px", background: cardColor?"rgba(0,0,0,0.12)":"var(--accent)12",
+              borderRadius:10, borderLeft:"3px solid "+(cardColor?textColor:"var(--accent)") }}>
+              <div style={{ fontSize:11, fontWeight:700, color:cardColor?textColor:"var(--accent)", marginBottom:4, letterSpacing:.5 }}>✦ AI SUGGESTION</div>
+              <p style={{ fontSize:14, color:onCard, lineHeight:1.6, margin:0 }}>{task.aiSuggestion}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tutorial ──────────────────────────────────────────────────────────────────
+function Tutorial({ onDone }) {
+  const [step, setStep] = useState(0);
+  const STEPS = [
+    {
+      icon: "✦",
+      title: "Welcome to TaskFlow",
+      body: "A smart AI-powered task manager. Let's walk through the key features — takes about a minute.",
+    },
+    {
+      icon: "🎤",
+      title: "Voice Task Creation",
+      body: "Press & hold the + Add Task button for ~0.6 seconds to record your task with your voice. AI transcribes and creates the task automatically — title, priority, time, and category all set.",
+      hint: "Try holding the button after this tour",
+    },
+    {
+      icon: "✍️",
+      title: "Smart Natural Language Input",
+      body: "In the New Task form, type anything naturally — \"walk the dog tonight after work\" — and AI rewrites it to a clean title, then picks urgency, best time, and category for you.",
+      hint: "Try it — AI updates the fields as you type",
+    },
+    {
+      icon: "⏱",
+      title: "Built-in Task Timer",
+      body: "Tap any task card to expand it. A stopwatch starts immediately and tracks how long you spend on it. When you close the card, the time is saved and shown as a small badge.",
+      hint: "Tap any task to start the timer",
+    },
+    {
+      icon: "🔁",
+      title: "Recurring Tasks",
+      body: "When creating a task, set it to repeat — every day, on specific weekdays, monthly on a date, or every N days. Completed recurring tasks reappear automatically at the scheduled time.",
+      hint: "Find all recurring tasks in the Recurrent tab",
+    },
+    {
+      icon: "✦",
+      title: "AI Smart Sort",
+      body: "Tap ✦ Smart Sort above your task list. AI analyses urgency, how stale each task is, and the current time of day, then suggests an optimal order. Apply it with one tap.",
+      hint: "Find Smart Sort in the My Tasks tab",
+    },
+    {
+      icon: "🎯",
+      title: "You're all set!",
+      body: "Tap the ❓ button in the header anytime to replay this tour. Now go conquer your tasks!",
+    },
+  ];
+  const s = STEPS[step];
+  const isLast = step === STEPS.length - 1;
+
+  return (
+    <div onClick={e=>e.stopPropagation()}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.90)", backdropFilter:"blur(10px)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:2500, padding:20 }}>
+      <div style={{ background:"var(--card-bg)", borderRadius:24, padding:"28px 24px 22px",
+        width:"100%", maxWidth:390, position:"relative", animation:"popIn .25s ease",
+        boxShadow:"0 32px 90px #000a" }}>
+
+        {/* Skip button */}
+        {!isLast && (
+          <button onClick={onDone}
+            style={{ position:"absolute", top:14, right:16, background:"none", border:"none",
+              color:"var(--text-muted)", fontSize:13, cursor:"pointer",
+              fontFamily:"'DM Sans',sans-serif", padding:"4px 8px" }}>
+            Skip
+          </button>
+        )}
+
+        {/* Progress bar */}
+        <div style={{ display:"flex", gap:4, marginBottom:26 }}>
+          {STEPS.map((_,i) => (
+            <div key={i} style={{ flex:i===step?3:1, height:4, borderRadius:99, transition:"all .3s",
+              background: i<=step?"var(--accent)":"var(--border)" }} />
+          ))}
+        </div>
+
+        {/* Icon */}
+        <div style={{ textAlign:"center", fontSize:58, lineHeight:1, marginBottom:18 }}>{s.icon}</div>
+
+        {/* Title */}
+        <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:21, fontWeight:800,
+          color:"var(--text)", textAlign:"center", marginBottom:12 }}>{s.title}</h2>
+
+        {/* Body */}
+        <p style={{ fontSize:14.5, color:"var(--text-muted)", textAlign:"center",
+          lineHeight:1.72, marginBottom: s.hint ? 12 : 26, padding:"0 4px" }}>{s.body}</p>
+
+        {/* Hint chip */}
+        {s.hint && (
+          <div style={{ textAlign:"center", fontSize:12, color:"var(--accent)", fontWeight:600,
+            marginBottom:22, padding:"6px 14px", background:"var(--accent)12",
+            borderRadius:20, display:"inline-block", width:"100%", boxSizing:"border-box" }}>
+            → {s.hint}
+          </div>
+        )}
+
+        {/* Navigation */}
+        <div style={{ display:"flex", gap:8 }}>
+          {step > 0 && (
+            <button onClick={()=>setStep(v=>v-1)}
+              style={{ background:"var(--btn-bg)", color:"var(--text-muted)", border:"1px solid var(--border)",
+                borderRadius:12, padding:"11px 16px", fontSize:14, cursor:"pointer",
+                fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>← Back</button>
+          )}
+          <button onClick={isLast ? onDone : ()=>setStep(v=>v+1)}
+            style={{ flex:1, background:"var(--accent)", color:"#fff", border:"none",
+              borderRadius:12, padding:"12px", fontSize:15, fontWeight:700, cursor:"pointer",
+              fontFamily:"'DM Sans',sans-serif" }}>
+            {isLast ? "Let's go! 🚀" : "Next →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── RecurringRow ───────────────────────────────────────────────────────────────
+function RecurringRow({ task, onUpdate, onEdit, onDelete }) {
+  const rec = task.recurrence;
+  const recLabel = !rec ? "" :
+    rec.type === "daily"    ? "Every day" :
+    rec.type === "weekly"   ? "Every " + REC_DAY_NAMES.filter((_,i)=>(rec.days||[]).includes(i)).join(" ") :
+    rec.type === "monthly"  ? `Day ${rec.day} of each month` :
+    rec.type === "interval" ? `Every ${rec.days} day${rec.days!==1?"s":""}` : "Recurring";
+
+  const urgencyEmoji = { low:"🟢", medium:"🟡", high:"🟠", critical:"🔴" }[task.urgency] || "";
+  const catColor = { Work:"#6355e8", Personal:"#f59e0b", Health:"#3ecf8e", Finance:"#06b6d4",
+    Home:"#f97316", Learning:"#7c6ef5", Social:"#ec4899", Other:"#94a3b8" }[task.category] || "var(--accent)";
+
+  return (
+    <div style={{ background:"var(--card-bg)",
+      border:`1.5px solid ${task.done ? "var(--border)" : "var(--accent)44"}`,
+      borderLeft:`5px solid ${task.done ? "var(--border)" : "var(--accent)"}`,
+      borderRadius:14, padding:"13px 14px", marginBottom:10,
+      opacity: task.done ? 0.75 : 1, transition:"opacity .2s" }}>
+
+      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <input type="checkbox" checked={task.done}
+          onChange={e=>onUpdate(task.id,{done:e.target.checked,lastUpdated:Date.now()})}
+          style={{ width:18, height:18, accentColor:"var(--accent)", cursor:"pointer", flexShrink:0 }} />
+
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:700,
+            color: task.done ? "var(--text-muted)" : "var(--text)",
+            textDecoration: task.done ? "line-through" : "none",
+            marginBottom:6, lineHeight:1.3 }}>
+            {task.title}
+          </div>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+            <span style={{ fontSize:11, padding:"2px 9px", borderRadius:20,
+              background:"var(--accent)15", color:"var(--accent)", fontWeight:700 }}>
+              🔁 {recLabel}
+            </span>
+            <span style={{ fontSize:11, padding:"2px 8px", borderRadius:20,
+              background:catColor+"18", color:catColor, fontWeight:600 }}>
+              {task.category}
+            </span>
+            <span style={{ fontSize:11, color:"var(--text-muted)" }}>{urgencyEmoji} {task.urgency}</span>
+            {task.done && task.nextOccurrence && (
+              <span style={{ fontSize:11, color:"var(--accent)", fontWeight:600 }}>
+                · Returns {new Date(task.nextOccurrence).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}
+              </span>
+            )}
+            {task.done && !task.nextOccurrence && task.recurrence && (
+              <span style={{ fontSize:11, color:"var(--text-muted)" }}>· Completed</span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+          <button onClick={()=>onEdit(task)}
+            style={{ ...iconBtn, width:32, height:32, fontSize:14 }}>✏️</button>
+          <button onClick={()=>onDelete(task.id)}
+            style={{ ...iconBtn, width:32, height:32, color:"var(--crit)" }}>✕</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SuggestedRow ──────────────────────────────────────────────────────────────
+function SuggestedRow({ item, onAdd, justAdded }) {
+  const catColor = { Health:"#3ecf8e", Learning:"#7c6ef5", Personal:"#f59e0b" }[item.category] || "var(--accent)";
+  const todIcon = { morning:"🌅", afternoon:"☀️", evening:"🌆", night:"🌙", anytime:"🔄" }[item.preferredTime||"anytime"];
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", gap:12,
+      background: justAdded ? "var(--accent)18" : "var(--card-bg)",
+      border: `1.5px solid ${justAdded ? "var(--accent)66" : "var(--border)"}`,
+      borderLeft: `5px solid ${catColor}`,
+      borderRadius:13, padding:"11px 14px", marginBottom:9, transition:"all .25s",
+    }}>
+      <input type="checkbox" checked={justAdded}
+        onChange={() => !justAdded && onAdd(item)}
+        style={{ width:18, height:18, accentColor:"var(--accent)", cursor:justAdded?"default":"pointer", flexShrink:0 }} />
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontFamily:"'Syne',sans-serif", fontSize:17, fontWeight:700,
+          color:justAdded?"var(--text-muted)":"var(--text)", textDecoration:justAdded?"line-through":"none", marginBottom:2 }}>
+          {item.title}
+        </div>
+        <div style={{ fontSize:12, color:"var(--text-muted)", lineHeight:1.4 }}>{item.description}</div>
+        <div style={{ display:"flex", gap:7, marginTop:5, flexWrap:"wrap" }}>
+          <span style={{ fontSize:11, padding:"1px 7px", borderRadius:20, background:catColor+"20", color:catColor, fontWeight:700 }}>{item.category}</span>
+          <span style={{ fontSize:11, color:"var(--text-muted)" }}>{todIcon} {item.preferredTime||"anytime"}</span>
+          <span style={{ fontSize:11, color:"var(--text-muted)" }}>· {item.urgency}</span>
+        </div>
+      </div>
+      {justAdded && <div style={{ fontSize:12, color:"var(--accent)", fontWeight:600, flexShrink:0 }}>✓ Added</div>}
+    </div>
+  );
+}
+
+// ── UndoToast ─────────────────────────────────────────────────────────────────
+function UndoToast({ message, onUndo, onDismiss, progress, hasUndo }) {
+  return (
+    <div style={{
+      position:"fixed", bottom:110, left:"50%", transform:"translateX(-50%)",
+      background:"var(--card-bg)", border:"1.5px solid var(--accent)66",
+      borderRadius:14, padding:"11px 16px", display:"flex", alignItems:"center", gap:12,
+      boxShadow:"0 8px 30px #0006", zIndex:600, animation:"slideUp .22s ease",
+      minWidth:240, maxWidth:340,
+    }}>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:13, color:"var(--text)", fontWeight:500 }}>{message}</div>
+        {hasUndo && (
+          <div style={{ height:3, background:"var(--border)", borderRadius:99, marginTop:6, overflow:"hidden" }}>
+            <div style={{ height:"100%", background:"var(--accent)", borderRadius:99, width:`${progress}%`, transition:"width .1s linear" }} />
+          </div>
+        )}
+      </div>
+      {hasUndo && <button onClick={onUndo} style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:9, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>Undo</button>}
+      <button onClick={onDismiss} style={{ ...iconBtn, width:24, height:24, flexShrink:0, fontSize:11 }}>✕</button>
+    </div>
+  );
+}
+
+// ── Add Task Modal ────────────────────────────────────────────────────────────
+// ── Shared modal form fields ──────────────────────────────────────────────────
+function TaskFormFields({ t, setT, aiPicked }) {
+  const timeOpts = ["anytime","morning","afternoon","evening","night"];
+  const fieldStyle = { ...selectStyle, width:"100%", padding:"8px 10px", fontSize:13 };
+  const labelStyle = { fontSize:13, color:"var(--text-muted)", display:"block", marginBottom:4, fontWeight:700, letterSpacing:.5 };
+  const aiBadge = {
+    fontSize:9, fontWeight:700, letterSpacing:.5, padding:"1px 5px", borderRadius:8,
+    background:"var(--accent)22", color:"var(--accent)", marginLeft:5,
+  };
+  return (
+    <>
+      <textarea
+        placeholder="Description (optional)"
+        value={t.description||""}
+        onChange={e=>setT(v=>({...v,description:e.target.value}))}
+        style={{ ...inputStyle, minHeight:58, resize:"vertical", marginBottom:11 }}
+      />
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:14 }}>
+        <div>
+          <label style={labelStyle}>
+            URGENCY {aiPicked?.urgency && <span style={aiBadge}>✦ AI</span>}
+          </label>
+          <select value={t.urgency} onChange={e=>setT(v=>({...v,urgency:e.target.value}))}
+            style={{ ...fieldStyle, borderColor: aiPicked?.urgency ? "var(--accent)66" : undefined }}>
+            {URGENCY_LABELS.map(o=><option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>
+            BEST TIME {aiPicked?.preferredTime && <span style={aiBadge}>✦ AI</span>}
+          </label>
+          <select value={t.preferredTime||"anytime"} onChange={e=>setT(v=>({...v,preferredTime:e.target.value}))}
+            style={{ ...fieldStyle, borderColor: aiPicked?.preferredTime ? "var(--accent)66" : undefined }}>
+            {timeOpts.map(o=><option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>
+            CATEGORY {aiPicked?.category && <span style={aiBadge}>✦ AI</span>}
+          </label>
+          <select value={t.category||"Work"} onChange={e=>setT(v=>({...v,category:e.target.value}))}
+            style={{ ...fieldStyle, borderColor: aiPicked?.category ? "var(--accent)66" : undefined }}>
+            {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>DUE DATE</label>
+          <input type="date" value={t.dueDate||""} onChange={e=>setT(v=>({...v,dueDate:e.target.value}))}
+            style={fieldStyle} />
+        </div>
+      </div>
+      <div>
+        <label style={labelStyle}>NOTES</label>
+        <textarea
+          placeholder="Any extra notes..."
+          value={t.notes||""}
+          onChange={e=>setT(v=>({...v,notes:e.target.value}))}
+          style={{ ...inputStyle, minHeight:48, resize:"vertical", marginBottom:11 }}
+        />
+      </div>
+      <div style={{ marginBottom:11 }}>
+        <label style={labelStyle}>REPEAT</label>
+        <select
+          value={t.recurrence ? t.recurrence.type : "none"}
+          onChange={e => {
+            const type = e.target.value;
+            if (type === "none")     setT(v=>({...v,recurrence:null}));
+            else if (type==="daily") setT(v=>({...v,recurrence:{type:"daily"}}));
+            else if (type==="weekly") setT(v=>({...v,recurrence:{type:"weekly",days:v.recurrence?.type==="weekly"?(v.recurrence.days||[]):[1]}}));
+            else if (type==="monthly") setT(v=>({...v,recurrence:{type:"monthly",day:v.recurrence?.day||1}}));
+            else if (type==="interval") setT(v=>({...v,recurrence:{type:"interval",days:v.recurrence?.days||7}}));
+          }}
+          style={{ ...fieldStyle, width:"100%" }}>
+          <option value="none">Never</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Weekly on…</option>
+          <option value="monthly">Monthly on day…</option>
+          <option value="interval">Every N days</option>
+        </select>
+        {t.recurrence?.type === "weekly" && (
+          <div style={{ display:"flex", gap:5, marginTop:8 }}>
+            {["S","M","T","W","T","F","S"].map((d,i) => {
+              const on = (t.recurrence?.days||[]).includes(i);
+              return (
+                <button key={i} type="button"
+                  onClick={() => {
+                    const days = t.recurrence?.days||[];
+                    const nd = on ? days.filter(x=>x!==i) : [...days,i].sort((a,b)=>a-b);
+                    setT(v=>({...v,recurrence:{type:"weekly",days:nd}}));
+                  }}
+                  style={{ flex:1, height:30, borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer",
+                    background:on?"var(--accent)":"var(--btn-bg)",
+                    color:on?"#fff":"var(--text-muted)",
+                    border:`1px solid ${on?"var(--accent)":"var(--border)"}`, padding:0 }}>
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {t.recurrence?.type === "monthly" && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:8 }}>
+            <span style={{ fontSize:13, color:"var(--text-muted)" }}>On day</span>
+            <input type="number" min={1} max={31}
+              value={t.recurrence.day||1}
+              onChange={e=>setT(v=>({...v,recurrence:{type:"monthly",day:Math.min(31,Math.max(1,parseInt(e.target.value)||1))}}))}
+              style={{ ...fieldStyle, width:64, padding:"5px 8px", textAlign:"center", fontSize:14 }} />
+            <span style={{ fontSize:13, color:"var(--text-muted)" }}>of each month</span>
+          </div>
+        )}
+        {t.recurrence?.type === "interval" && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:8 }}>
+            <span style={{ fontSize:13, color:"var(--text-muted)" }}>Every</span>
+            <input type="number" min={1} max={365}
+              value={t.recurrence.days||7}
+              onChange={e=>setT(v=>({...v,recurrence:{type:"interval",days:Math.min(365,Math.max(1,parseInt(e.target.value)||1))}}))}
+              style={{ ...fieldStyle, width:64, padding:"5px 8px", textAlign:"center", fontSize:14 }} />
+            <span style={{ fontSize:13, color:"var(--text-muted)" }}>days</span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Add Task Modal ────────────────────────────────────────────────────────────
+function AddTaskModal({ onClose, onAdd }) {
+  const DEFAULTS = { title:"", urgency:"medium", category:"Work", preferredTime:"anytime", description:"", dueDate:"", notes:"", recurrence:null };
+  const [t, setT] = useState(DEFAULTS);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPicked, setAiPicked] = useState(null); // tracks which fields AI filled
+  const titleRef = useRef(null);
+
+  // When user stops typing in title, auto-fill urgency + time via AI
+  const autoFillTimer = useRef(null);
+  const handleTitleChange = (val) => {
+    setT(v=>({...v,title:val}));
+    setAiPicked(null);
+    clearTimeout(autoFillTimer.current);
+    if (val.trim().length < 4) return;
+    autoFillTimer.current = setTimeout(async () => {
+      setAiLoading(true);
+      try {
+        const prompt = `The user typed this into a task input field: "${val.trim()}"
+Current time of day: ${timeOfDayLabel()}
+
+This may be a raw sentence, not a clean task title. Extract all task details.
+Reply with ONLY a JSON object, no explanation, no markdown:
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","reason":"one short sentence"}
+
+Rules:
+- title: convert natural language to a short action title (e.g. "I want to walk the dog tonight" → "Walk the dog")
+- urgency: how time-sensitive does this sound?
+- preferredTime: infer from context clues like "tonight", "after work", "in the morning"
+- category: pick the most fitting from Work, Personal, Health, Finance, Home, Learning, Social, Other`;
+        const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
+        const cleaned = raw.replace(/```json|```/g,"").trim();
+        const start = cleaned.indexOf("{");
+        const end = cleaned.lastIndexOf("}");
+        if (start !== -1 && end !== -1) {
+          const parsed = JSON.parse(cleaned.slice(start, end+1));
+          const picked = {};
+          if (parsed.title && parsed.title.trim().length > 0) {
+            setT(v=>({...v,title:parsed.title.trim()}));
+            picked.title = true;
+          }
+          if (["low","medium","high","critical"].includes(parsed.urgency)) {
+            setT(v=>({...v,urgency:parsed.urgency}));
+            picked.urgency = true;
+          }
+          if (["morning","afternoon","evening","night","anytime"].includes(parsed.preferredTime)) {
+            setT(v=>({...v,preferredTime:parsed.preferredTime}));
+            picked.preferredTime = true;
+          }
+          if (CATEGORIES.includes(parsed.category)) {
+            setT(v=>({...v,category:parsed.category}));
+            picked.category = true;
+          }
+          setAiPicked(picked);
+        }
+      } catch(e) { /* silently fail */ }
+      setAiLoading(false);
+    }, 900);
+  };
+
+  const submit = () => { if (!t.title.trim()) return; onAdd(t); };
+  const handleBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+
+  return (
+    <div onMouseDown={handleBackdrop}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{ background:"var(--card-bg)", borderRadius:18, padding:"22px 24px",
+          width:"100%", maxWidth:440, maxHeight:"90vh", overflowY:"auto",
+          boxShadow:"0 24px 70px rgba(0,0,0,0.5)", animation:"popIn .22s ease" }}>
+        <div style={{ display:"flex", alignItems:"center", marginBottom:16 }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, color:"var(--text)", flex:1 }}>New Task</h2>
+          <button onMouseDown={e=>{e.stopPropagation();onClose();}} style={{ ...iconBtn, borderRadius:"50%" }}>✕</button>
+        </div>
+
+        <div style={{ position:"relative", marginBottom:9 }}>
+          <input ref={titleRef} autoFocus
+            placeholder="Describe your task in any way… *"
+            value={t.title}
+            onChange={e=>handleTitleChange(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&submit()}
+            style={{ ...inputStyle, border:"1.5px solid var(--accent)66", fontSize:14, paddingRight:36 }}
+          />
+          {aiLoading && (
+            <div style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+              fontSize:14, color:"var(--accent)", animation:"spin 1s linear infinite" }}>✦</div>
+          )}
+        </div>
+
+        {aiPicked && (
+          <div style={{ fontSize:12, color:"var(--accent)", marginBottom:9, padding:"6px 10px",
+            background:"var(--accent)11", borderRadius:8, borderLeft:"3px solid var(--accent)" }}>
+            ✦ AI refined your task — edit anything you want to change
+          </div>
+        )}
+
+        <TaskFormFields t={t} setT={setT} aiPicked={aiPicked} />
+
+        <div style={{ display:"flex", gap:9, justifyContent:"flex-end" }}>
+          <button onMouseDown={e=>{e.stopPropagation();onClose();}}
+            style={{ background:"var(--btn-bg)", color:"var(--text-muted)", border:"1px solid var(--border)",
+              borderRadius:10, padding:"9px 17px", fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Cancel
+          </button>
+          <button onMouseDown={e=>{e.stopPropagation();submit();}}
+            style={{ background:"var(--accent)", color:"#fff", border:"none",
+              borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Add Task ↵
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Edit Task Modal ───────────────────────────────────────────────────────────
+function EditTaskModal({ task, onClose, onSave }) {
+  const [t, setT] = useState({
+    title: task.title || "",
+    description: task.description || "",
+    urgency: task.urgency || "medium",
+    preferredTime: task.preferredTime || "anytime",
+    category: task.category || "Work",
+    dueDate: task.dueDate || "",
+    notes: task.notes || "",
+    recurrence: task.recurrence || null,
+  });
+
+  const submit = () => { if (!t.title.trim()) return; onSave(task.id, t); onClose(); };
+  const handleBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+
+  return (
+    <div onMouseDown={handleBackdrop}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{ background:"var(--card-bg)", borderRadius:18, padding:"22px 24px",
+          width:"100%", maxWidth:440, maxHeight:"90vh", overflowY:"auto",
+          boxShadow:"0 24px 70px rgba(0,0,0,0.5)", animation:"popIn .22s ease" }}>
+        <div style={{ display:"flex", alignItems:"center", marginBottom:16 }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, color:"var(--text)", flex:1 }}>✏️ Edit Task</h2>
+          <button onMouseDown={e=>{e.stopPropagation();onClose();}} style={{ ...iconBtn, borderRadius:"50%" }}>✕</button>
+        </div>
+
+        <input
+          autoFocus
+          placeholder="Task title *"
+          value={t.title}
+          onChange={e=>setT(v=>({...v,title:e.target.value}))}
+          onKeyDown={e=>e.key==="Enter"&&submit()}
+          style={{ ...inputStyle, border:"1.5px solid var(--accent)66", marginBottom:9, fontSize:14 }}
+        />
+
+        <TaskFormFields t={t} setT={setT} aiPicked={null} />
+
+        <div style={{ display:"flex", gap:9, justifyContent:"flex-end" }}>
+          <button onMouseDown={e=>{e.stopPropagation();onClose();}}
+            style={{ background:"var(--btn-bg)", color:"var(--text-muted)", border:"1px solid var(--border)",
+              borderRadius:10, padding:"9px 17px", fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Cancel
+          </button>
+          <button onMouseDown={e=>{e.stopPropagation();submit();}}
+            style={{ background:"var(--accent)", color:"#fff", border:"none",
+              borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Save Changes ✓
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App() {
+  const tod = timeOfDayLabel();
+
+  // ── Persistence ──────────────────────────────────────────────────────────
+  const STORAGE_KEY   = "taskflow_tasks_v1";
+  const DARK_KEY      = "taskflow_dark_v2";
+  const TUTORIAL_KEY  = "taskflow_tutorial_done";
+
+  function loadTasks() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch(e) {}
+    // Default sample tasks on first launch
+    return [
+      { id:uid(), title:"Review project proposal", urgency:"high", category:"Work", preferredTime:"morning", done:false, createdAt:Date.now()-9*3600000, lastUpdated:Date.now()-9*3600000, description:"Read through the Q3 proposal and add comments.", notes:"", aiSuggestion:"Start with a 10-minute skim to find key sections, then comment using the Sandwich method: strength → concern → suggestion.", color:null },
+      { id:uid(), title:"Take a 30-min walk", urgency:"medium", category:"Health", preferredTime:"afternoon", done:false, createdAt:Date.now()-2*3600000, lastUpdated:Date.now()-2*3600000, notes:"", color:null },
+      { id:uid(), title:"Pay electricity bill", urgency:"critical", category:"Finance", preferredTime:"anytime", done:false, createdAt:Date.now()-50*3600000, lastUpdated:Date.now()-50*3600000, notes:"", color:null },
+      { id:uid(), title:"Read a book chapter", urgency:"low", category:"Learning", preferredTime:"evening", done:false, createdAt:Date.now()-1*3600000, lastUpdated:Date.now()-1*3600000, notes:"", color:null },
+    ];
+  }
+
+  function loadDark() {
+    try { const s = localStorage.getItem(DARK_KEY); if (s !== null) return s === "true"; } catch(e) {}
+    return false;
+  }
+
+  const [tasks, setTasks] = useState(() => loadTasks());
+
+  // Drag
+  const dragIdx   = useRef(null);
+  const [draggingId, setDraggingId] = useState(null);
+  const [overTaskId, setOverTaskId] = useState(null);
+
+  // Suggestions
+  const [sugCategory, setSugCategory] = useState("Health");
+  const [visibleSugs, setVisibleSugs] = useState({ Health:initVisible("Health"), Learning:initVisible("Learning"), Personal:initVisible("Personal") });
+  const nextPoolIdx = useRef({ Health:5, Learning:5, Personal:5 });
+  const [justAddedIds, setJustAddedIds] = useState(new Set());
+
+  // Toast
+  const [toast, setToast]           = useState(null);
+  const [toastProgress, setToastProgress] = useState(100);
+  const toastTimer  = useRef(null);
+  const toastFrames = useRef(null);
+
+  // UI
+  const [activeTab, setActiveTab]   = useState("tasks");
+  const [addOpen, setAddOpen]       = useState(false);
+  const [filter, setFilter]         = useState("all");
+  const [searchQ, setSearchQ]       = useState("");
+  const [dark, setDark] = useState(() => loadDark());
+  const [orgSuggestion, setOrgSuggestion] = useState("");
+  const [orgOrder, setOrgOrder]     = useState(null);
+  const [aiLoading, setAiLoading]   = useState(false);
+  const [aiSugLoading, setAiSugLoading] = useState(false);
+
+  // Chat
+  const [chatOpen, setChatOpen]       = useState(false);
+  const [chatTask, setChatTask]       = useState(null);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatInput, setChatInput]     = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef(null);
+
+  // Voice
+  const [voiceRecording, setVoiceRecording] = useState(false);
+  const [voiceLoading, setVoiceLoading]     = useState(false);
+  const recognitionRef  = useRef(null);
+  const longPressTimer  = useRef(null);
+  const longPressFired  = useRef(false);
+
+  // Tutorial
+  const [showTutorial, setShowTutorial] = useState(() => {
+    try { return !localStorage.getItem(TUTORIAL_KEY); } catch(e) { return true; }
+  });
+  const closeTutorial = () => {
+    try { localStorage.setItem(TUTORIAL_KEY, "1"); } catch(e) {}
+    setShowTutorial(false);
+  };
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [chatHistory]);
+
+  // Persist tasks to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch(e) {}
+  }, [tasks]);
+
+  // Recurring task reset — check every minute if any completed recurring tasks are due
+  useEffect(() => {
+    const check = () => {
+      const now = Date.now();
+      setTasks(prev => {
+        if (!prev.some(t => t.done && t.recurrence && t.nextOccurrence && t.nextOccurrence <= now)) return prev;
+        return prev.map(t =>
+          (t.done && t.recurrence && t.nextOccurrence && t.nextOccurrence <= now)
+            ? {...t, done:false, nextOccurrence:null, lastUpdated:Date.now()}
+            : t
+        );
+      });
+    };
+    check();
+    const id = setInterval(check, 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Persist dark mode + apply body.dark class for CSS variable cascade
+  useEffect(() => {
+    try { localStorage.setItem(DARK_KEY, String(dark)); } catch(e) {}
+    if (dark) {
+      document.body.classList.add('dark');
+    } else {
+      document.body.classList.remove('dark');
+    }
+    const meta = document.getElementById('theme-color-meta');
+    if (meta) meta.setAttribute('content', dark ? '#000000' : '#f5f5f5');
+  }, [dark]);
+
+
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  const showToast = useCallback((message, undoFn) => {
+    clearTimeout(toastTimer.current);
+    cancelAnimationFrame(toastFrames.current);
+    setToast({ message, undo: undoFn });
+    setToastProgress(100);
+    if (!undoFn) { toastTimer.current = setTimeout(() => setToast(null), 2500); return; }
+    const start = Date.now();
+    const DURATION = 5000;
+    const tick = () => {
+      const pct = Math.max(0, 100 - ((Date.now()-start)/DURATION)*100);
+      setToastProgress(pct);
+      if (pct > 0) toastFrames.current = requestAnimationFrame(tick);
+      else setToast(null);
+    };
+    toastFrames.current = requestAnimationFrame(tick);
+    toastTimer.current = setTimeout(() => setToast(null), DURATION);
+  }, []);
+
+  const dismissToast = () => { clearTimeout(toastTimer.current); cancelAnimationFrame(toastFrames.current); setToast(null); };
+
+  // ── Task ops ───────────────────────────────────────────────────────────────
+  const updateTask = (id, patch) => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== id) return t;
+      const updated = {...t, ...patch};
+      if (patch.done === true && !t.done && t.recurrence) {
+        updated.nextOccurrence = getNextOccurrence(t.recurrence);
+      }
+      if (patch.done === false && t.nextOccurrence) {
+        updated.nextOccurrence = null;
+      }
+      return updated;
+    }));
+  };
+  const deleteTask = (id) => {
+    const removed = tasks.find(t=>t.id===id);
+    setTasks(prev => prev.filter(t=>t.id!==id));
+    if (removed) showToast(`Removed "${removed.title}"`, () => setTasks(prev => [...prev, removed]));
+  };
+  const [editTask, setEditTask] = useState(null); // task being edited
+
+  const addTask = (nt) => {
+    setTasks(prev => [...prev, { ...nt, id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null }]);
+    setAddOpen(false);
+  };
+
+  const saveEditedTask = (id, patch) => {
+    setTasks(prev => prev.map(t => t.id===id ? {...t, ...patch, lastUpdated:Date.now()} : t));
+  };
+  const clearCompleted = () => {
+    const count = tasks.filter(t=>t.done).length;
+    const snapshot = tasks;
+    setTasks(prev => prev.filter(t=>!t.done));
+    showToast(`Cleared ${count} completed task${count!==1?"s":""}`, () => setTasks(snapshot));
+  };
+
+  // ── Suggestions ────────────────────────────────────────────────────────────
+  const addSuggestion = (item) => {
+    const newId = uid();
+    setTasks(prev => [...prev, { ...item, id:newId, done:false, createdAt:Date.now(), lastUpdated:Date.now(), notes:"", color:null }]);
+    setJustAddedIds(prev => new Set([...prev, item._uid]));
+    const cat = item.category;
+    const pool = POOL[cat];
+    const nextIdx = nextPoolIdx.current[cat];
+    setTimeout(() => {
+      setVisibleSugs(prev => {
+        const list = [...prev[cat]];
+        const rowIdx = list.findIndex(s=>s._uid===item._uid);
+        if (rowIdx===-1) return prev;
+        if (nextIdx < pool.length) {
+          list[rowIdx] = { ...pool[nextIdx], category:cat, _poolIdx:nextIdx, _uid:uid() };
+          nextPoolIdx.current[cat] = nextIdx+1;
+        } else list.splice(rowIdx,1);
+        return { ...prev, [cat]:list };
+      });
+      setJustAddedIds(prev => { const n=new Set(prev); n.delete(item._uid); return n; });
+    }, 900);
+    showToast(`Added "${item.title}"`, () => setTasks(prev=>prev.filter(t=>t.id!==newId)));
+  };
+
+  const getAiSuggestions = async (cat) => {
+    setAiSugLoading(true);
+    try {
+      const r = await askClaude(
+        [{ role:"user", content:`Generate 5 specific, actionable ${cat} task suggestions. Return ONLY a JSON array:\n[{"title":"...","description":"...","urgency":"medium","preferredTime":"morning"}]\nNo markdown, no backticks.` }],
+        "Respond only with valid JSON arrays. No markdown. No backticks. No extra text."
+      );
+      const parsed = JSON.parse(r.replace(/```json|```/g,"").trim());
+      setVisibleSugs(prev => ({ ...prev, [cat]: parsed.map(s=>({...s,category:cat,_poolIdx:-1,_uid:uid()})) }));
+    } catch {}
+    setAiSugLoading(false);
+  };
+
+  // ── Drag ───────────────────────────────────────────────────────────────────
+  const handleDragStart = (e, taskId) => {
+    const activeList = tasks.filter(t=>!t.done);
+    dragIdx.current = activeList.findIndex(t=>t.id===taskId);
+    setDraggingId(taskId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragOver = (e, taskId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setOverTaskId(taskId);
+  };
+  const handleDrop = (e, taskId) => {
+    e.preventDefault();
+    const activeList = tasks.filter(t=>!t.done);
+    const toIdx = activeList.findIndex(t=>t.id===taskId);
+    const fromIdx = dragIdx.current;
+    if (fromIdx===null||fromIdx===toIdx) { endDrag(); return; }
+    setTasks(prev => {
+      const done = prev.filter(t=>t.done);
+      const active = prev.filter(t=>!t.done);
+      const [moved] = active.splice(fromIdx,1);
+      active.splice(toIdx,0,moved);
+      return [...active,...done];
+    });
+    endDrag();
+  };
+  const endDrag = () => { dragIdx.current=null; setDraggingId(null); setOverTaskId(null); };
+
+  // ── Chat ───────────────────────────────────────────────────────────────────
+  const openChat = (task) => {
+    setChatTask(task);
+    setChatHistory([{ role:"assistant", content:`How can I help with **"${task.title}"**? I can suggest steps, estimate time, or break it down.` }]);
+    setChatOpen(true);
+  };
+  const openGeneralChat = () => {
+    setChatTask(null);
+    setChatHistory([{ role:"assistant", content:`I can see all ${tasks.length} tasks. Ask me about priority, time estimates, or how to tackle anything on your list!` }]);
+    setChatOpen(true);
+  };
+  // ── Voice task creation ─────────────────────────────────────────────────────
+  const startVoiceTask = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { showToast("Voice input not supported on this browser", null); return; }
+    const recognition = new SR();
+    recognitionRef.current = recognition;
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    setVoiceRecording(true);
+    recognition.start();
+    recognition.onresult = async (event) => {
+      const transcript = event.results[0][0].transcript;
+      setVoiceRecording(false);
+      setVoiceLoading(true);
+      try {
+        const prompt = `Extract task details from this voice input: "${transcript}"
+Reply with ONLY a JSON object, no markdown:
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","recurrence":null}
+
+For the recurrence field, detect any repetition in the speech:
+- null → no repetition mentioned
+- {"type":"daily"} → "every day", "daily", "each morning" etc.
+- {"type":"weekly","days":[N,...]} → "every Monday" (1), "every Mon and Wed" ([1,3]), Sun=0,Mon=1,Tue=2,Wed=3,Thu=4,Fri=5,Sat=6
+- {"type":"monthly","day":N} → "every 15th", "monthly on the 3rd" etc.
+- {"type":"interval","days":N} → "every 3 days", "every 2 weeks" (14), "every other day" (2)`;
+        const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
+        const cleaned = raw.replace(/```json|```/g,"").trim();
+        const s = cleaned.indexOf("{"); const e2 = cleaned.lastIndexOf("}");
+        if (s !== -1 && e2 !== -1) {
+          const parsed = JSON.parse(cleaned.slice(s, e2+1));
+          if (parsed.title) {
+            const validRecTypes = ["daily","weekly","monthly","interval"];
+            const rec = (parsed.recurrence && validRecTypes.includes(parsed.recurrence.type)) ? parsed.recurrence : null;
+            setTasks(prev => [...prev, {
+              title: parsed.title,
+              urgency: ["low","medium","high","critical"].includes(parsed.urgency) ? parsed.urgency : "medium",
+              preferredTime: ["morning","afternoon","evening","night","anytime"].includes(parsed.preferredTime) ? parsed.preferredTime : "anytime",
+              category: CATEGORIES.includes(parsed.category) ? parsed.category : "Work",
+              description: parsed.description || "",
+              notes: "", dueDate: "", recurrence: rec,
+              id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null,
+            }]);
+            showToast(`🎤 Added: "${parsed.title}"${rec ? " · 🔁 recurring" : ""}`, null);
+          }
+        }
+      } catch(e) { showToast("Could not process voice input", null); }
+      setVoiceLoading(false);
+      recognitionRef.current = null;
+    };
+    recognition.onerror = (ev) => {
+      setVoiceRecording(false); setVoiceLoading(false);
+      recognitionRef.current = null;
+      if (ev.error !== "aborted") showToast("Voice error: " + ev.error, null);
+    };
+    recognition.onend = () => { recognitionRef.current = null; };
+  };
+  const stopVoice = () => {
+    if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
+    setVoiceRecording(false);
+  };
+
+  const sendChat = async () => {
+    if (!chatInput.trim()||chatLoading) return;
+    const msg = chatInput.trim(); setChatInput("");
+    const ctx = chatTask
+      ? `Task:"${chatTask.title}"(urgency:${chatTask.urgency},category:${chatTask.category},time:${chatTask.preferredTime||"anytime"}). Desc:${chatTask.description||"none"}. Notes:${chatTask.notes||"none"}.`
+      : `User has ${tasks.length} tasks:${tasks.map(t=>`"${t.title}"(${t.urgency},${t.category})`).join(";")}.`;
+    setChatHistory(prev=>[...prev,{role:"user",content:msg}]);
+    setChatLoading(true);
+    try {
+      const r = await askClaude([{role:"user",content:`${ctx}\n\nUser:${msg}`}]);
+      setChatHistory(prev=>[...prev,{role:"assistant",content:r}]);
+    } catch { setChatHistory(prev=>[...prev,{role:"assistant",content:"Connection error."}]); }
+    setChatLoading(false);
+  };
+
+  // ── Smart sort ─────────────────────────────────────────────────────────────
+  const applyOrgOrder = () => {
+    if (!orgOrder) return;
+    setTasks(prev => {
+      const done = prev.filter(t=>t.done);
+      const active = prev.filter(t=>!t.done);
+      const reordered = [];
+      orgOrder.forEach(id => { const t=active.find(x=>x.id===id); if(t) reordered.push(t); });
+      active.forEach(t => { if(!reordered.find(x=>x.id===t.id)) reordered.push(t); });
+      return [...reordered,...done];
+    });
+    setOrgSuggestion(""); setOrgOrder(null);
+    showToast("✓ Task order applied!", null);
+  };
+
+  const getOrgSuggestion = async () => {
+    setAiLoading(true); setOrgSuggestion(""); setOrgOrder(null);
+    const active = tasks.filter(t=>!t.done);
+    const taskList = active.map((t,i)=>`${i+1}. ID:${t.id} title:"${t.title}" urgency:${t.urgency} time:${t.preferredTime||"anytime"} staleness:${staleness(t)}`).join("\n");
+    try {
+      const r = await askClaude([{ role:"user", content:`It is ${tod} (${new Date().toLocaleTimeString()}). Tasks:\n${taskList}\n\nWrite a numbered priority list using the task TITLE (not the ID) with one short reason per item.\n\nThen on a new line write exactly: ORDER_JSON: followed by a JSON array of the task IDs in priority order. Example: ORDER_JSON: ["id1","id2"]` }]);
+      const jsonMatch = r.match(/ORDER_JSON:\s*(\[.*?\])/s);
+      if (jsonMatch) { try { setOrgOrder(JSON.parse(jsonMatch[1])); } catch {} }
+      setOrgSuggestion(r.replace(/ORDER_JSON:.*$/s,"").trim());
+    } catch { setOrgSuggestion("Could not load. Check connection."); }
+    setAiLoading(false);
+  };
+
+  // ── Derived lists ──────────────────────────────────────────────────────────
+  const activeTasks = tasks
+    .filter(t=>!t.done)
+    .filter(t=>!searchQ || t.title.toLowerCase().includes(searchQ.toLowerCase()) || (t.category||"").toLowerCase().includes(searchQ.toLowerCase()));
+
+  const completedTasks = tasks
+    .filter(t=>t.done)
+    .filter(t=>!searchQ || t.title.toLowerCase().includes(searchQ.toLowerCase()) || (t.category||"").toLowerCase().includes(searchQ.toLowerCase()));
+
+  const donePct = tasks.length ? Math.round(tasks.filter(t=>t.done).length/tasks.length*100) : 0;
+  const theme = dark ? darkTheme : lightTheme;
+  const catColors = { Health:"#3ecf8e", Learning:"#7c6ef5", Personal:"#f59e0b" };
+
+  const recurringTasks    = tasks.filter(t => t.recurrence);
+  const activeRecurring   = recurringTasks.filter(t => !t.done);
+  const completedRecurring = recurringTasks.filter(t => t.done);
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        ::-webkit-scrollbar{width:5px;}
+        ::-webkit-scrollbar-thumb{background:var(--border);border-radius:99px;}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+        @keyframes fadeOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(6px)}}
+        @keyframes slideIn{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+        @keyframes slideUp{from{opacity:0;transform:translate(-50%,20px)}to{opacity:1;transform:translate(-50%,0)}}
+        @keyframes popIn{from{opacity:0;transform:scale(.93)}to{opacity:1;transform:scale(1)}}
+        .t-anim{animation:fadeIn .25s ease both;}
+        .t-done{animation:fadeOut .3s ease both;}
+        .chat-anim{animation:slideIn .25s ease both;}
+        .fab-btn:hover{filter:brightness(1.1);}
+      `}</style>
+
+      <div style={{ minHeight:"100vh", background:"var(--bg)", color:"var(--text)", fontFamily:"'DM Sans',sans-serif" }}>
+
+        {/* ── Header ── */}
+        <div style={{ background:"var(--header-bg)", borderBottom:"1px solid var(--border)", padding:"12px 20px", display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:28, fontWeight:800, letterSpacing:-.5, color:"var(--text)" }}>✦ TaskFlow</h1>
+            <div style={{ fontSize:13, color:"var(--text-muted)", marginTop:1 }}>Good {tod} · {tasks.filter(t=>!t.done).length} active · {donePct}% done</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+            <div style={{ display:"flex", gap:6 }}>
+              <button onClick={()=>setShowTutorial(true)}
+                style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
+                title="Help / Tutorial">❓</button>
+              <button onClick={()=>setDark(v=>!v)}
+                style={{ ...iconBtn, fontSize:20, width:42, height:42, borderRadius:12 }}>
+                {dark ? "☀️" : "🌙"}
+              </button>
+            </div>
+            <div style={{ width:72 }}>
+              <div style={{ fontSize:10, color:"var(--text-muted)", textAlign:"right", marginBottom:3 }}>{donePct}%</div>
+              <div style={{ height:5, background:"var(--border)", borderRadius:99, overflow:"hidden" }}>
+                <div style={{ width:`${donePct}%`, height:"100%", background:"var(--accent)", borderRadius:99, transition:"width .5s" }} />
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* ── Tabs ── */}
+        <div style={{ background:"var(--header-bg)", borderBottom:"1px solid var(--border)", padding:"0 20px", display:"flex" }}>
+          {[["tasks","📋 Tasks"],["recurrent","🔁 Recurrent"],["suggested","✨ Suggested"]].map(([tab,label])=>(
+            <button key={tab} onClick={()=>setActiveTab(tab)} style={{
+              background:"none", border:"none", borderBottom:activeTab===tab?"2.5px solid var(--accent)":"2.5px solid transparent",
+              padding:"13px 20px", fontSize:16, fontWeight:600, color:activeTab===tab?"var(--accent)":"var(--text-muted)",
+              cursor:"pointer", fontFamily:"'DM Sans',sans-serif", transition:"all .15s",
+            }}>{label}</button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", height:"calc(100vh - 105px)" }}>
+
+          {/* ══ MY TASKS TAB ══ */}
+          {activeTab==="tasks" && (
+            <div style={{ flex:1, overflowY:"auto", padding:"15px 20px 120px" }}>
+
+              {/* Staleness legend */}
+              <div style={{ display:"flex", gap:12, marginBottom:11, flexWrap:"wrap" }}>
+                {[["fresh","<6h","var(--fresh)"],["aging","6-24h","var(--aging)"],["stale","1-3d","var(--stale)"],["critical",">3d","var(--crit)"]].map(([l,d,c])=>(
+                  <div key={l} style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"var(--text-muted)" }}>
+                    <div style={{ width:7, height:7, borderRadius:"50%", background:c }} />
+                    <span style={{ color:c, fontWeight:700 }}>{l}</span><span>{d}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Controls */}
+              <div style={{ display:"flex", gap:7, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+                <input placeholder="Search tasks…" value={searchQ} onChange={e=>setSearchQ(e.target.value)}
+                  style={{ flex:1, minWidth:120, background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:10, padding:"7px 11px", color:"var(--text)", fontSize:13, fontFamily:"'DM Sans',sans-serif", outline:"none" }} />
+                <button onClick={getOrgSuggestion} disabled={aiLoading} style={{ background:"var(--accent)22", color:"var(--accent)", border:"1px solid var(--accent)44", borderRadius:8, padding:"6px 12px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+                  {aiLoading?"✦ …":"✦ Smart Sort"}
+                </button>
+              </div>
+
+              {/* Drag hint */}
+              <div style={{ fontSize:11, color:"var(--text-muted)", marginBottom:10, display:"flex", alignItems:"center", gap:5 }}>
+                <span>⠿</span><span>Drag to reorder · 🎨 to color · ✦ to ask AI</span>
+              </div>
+
+              {/* Smart sort result */}
+              {orgSuggestion && (
+                <div style={{ background:"var(--accent)12", border:"1px solid var(--accent)44", borderRadius:12, padding:"11px 13px", marginBottom:12, animation:"fadeIn .3s ease" }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:"var(--accent)", marginBottom:4, letterSpacing:.5 }}>✦ AI PRIORITY — {tod.toUpperCase()}</div>
+                  <pre style={{ fontSize:13, color:"var(--text)", whiteSpace:"pre-wrap", fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, margin:0 }}>{orgSuggestion}</pre>
+                  <div style={{ display:"flex", gap:10, marginTop:10, alignItems:"center" }}>
+                    {orgOrder && orgOrder.length>0 && (
+                      <button onClick={applyOrgOrder} style={{
+                        background:"none", color:"var(--accent)",
+                        border:"none", padding:0,
+                        fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
+                        textDecoration:"underline", textUnderlineOffset:3,
+                      }}>↕ Apply this order</button>
+                    )}
+                    <button onClick={()=>{setOrgSuggestion("");setOrgOrder(null);}} style={{ fontSize:12, color:"var(--text-muted)", background:"none", border:"none", cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>dismiss</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Active tasks */}
+              {activeTasks.length===0 && completedTasks.length===0 ? (
+                <div style={{ textAlign:"center", padding:"55px 20px", color:"var(--text-muted)" }}>
+                  <div style={{ fontSize:34, marginBottom:9 }}>🎯</div>
+                  <div style={{ fontFamily:"'Syne',sans-serif", fontSize:15, marginBottom:3 }}>No tasks yet</div>
+                  <div style={{ fontSize:13 }}>Tap the <strong style={{color:"var(--accent)"}}>+ Add Task</strong> button below</div>
+                </div>
+              ) : activeTasks.length===0 ? (
+                <div style={{ textAlign:"center", padding:"30px 20px", color:"var(--text-muted)", fontSize:13 }}>
+                  All tasks complete! 🎉
+                </div>
+              ) : activeTasks.map((task) => (
+                <div key={task.id} className="t-anim"
+                  draggable
+                  onDragStart={e=>handleDragStart(e,task.id)}
+                  onDragOver={e=>handleDragOver(e,task.id)}
+                  onDrop={e=>handleDrop(e,task.id)}
+                  onDragEnd={endDrag}>
+                  <TaskCard
+                    task={task}
+                    onUpdate={updateTask}
+                    onEdit={setEditTask}
+                    onDelete={deleteTask}
+                    onChat={openChat}
+                    isDragging={draggingId===task.id}
+                    isOver={overTaskId===task.id&&draggingId!==task.id}
+                    isCompleted={false}
+                  />
+                </div>
+              ))}
+
+              {/* ── Completed section ── */}
+              {completedTasks.length > 0 && (
+                <div style={{ marginTop:24 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+                    <div style={{ height:1, flex:1, background:"var(--border)" }} />
+                    <span style={{ fontSize:14, fontWeight:700, color:"var(--text-muted)", letterSpacing:.5 }}>
+                      ✓ COMPLETED ({completedTasks.length})
+                    </span>
+                    <div style={{ height:1, flex:1, background:"var(--border)" }} />
+                    <button onClick={clearCompleted} style={{
+                      background:"var(--crit)18", color:"var(--crit)", border:"1px solid var(--crit)44",
+                      borderRadius:8, padding:"5px 12px", fontSize:11, fontWeight:700, cursor:"pointer",
+                      fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap",
+                    }}>
+                      🗑 Clear all
+                    </button>
+                  </div>
+                  {completedTasks.map(task=>(
+                    <div key={task.id} style={{ animation:"fadeIn .3s ease" }}>
+                      <TaskCard
+                        task={task}
+                        onUpdate={updateTask}
+                    onEdit={setEditTask}
+                        onDelete={deleteTask}
+                        onChat={openChat}
+                        isDragging={false}
+                        isOver={false}
+                        isCompleted={true}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ SUGGESTED TAB ══ */}
+          {/* ══ RECURRENT TAB ══ */}
+          {activeTab==="recurrent" && (
+            <div style={{ flex:1, overflowY:"auto", padding:"15px 20px 120px" }}>
+              <div style={{ marginBottom:14 }}>
+                <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700, color:"var(--text)", marginBottom:3 }}>🔁 Recurring Tasks</h2>
+                <p style={{ fontSize:13, color:"var(--text-muted)", lineHeight:1.5 }}>All tasks set to repeat. Manage them here — they always appear even when completed.</p>
+              </div>
+
+              {recurringTasks.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"48px 20px", color:"var(--text-muted)" }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>🔁</div>
+                  <div style={{ fontSize:15, fontWeight:600, marginBottom:6 }}>No recurring tasks yet</div>
+                  <div style={{ fontSize:13 }}>When creating a task, set a repeat schedule to see it here.</div>
+                </div>
+              ) : (
+                <>
+                  {activeRecurring.length > 0 && (
+                    <div style={{ marginBottom:18 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", letterSpacing:.7, textTransform:"uppercase", marginBottom:8 }}>Active ({activeRecurring.length})</div>
+                      {activeRecurring.map(task => (
+                        <RecurringRow key={task.id} task={task}
+                          onUpdate={(patch) => updateTask(task.id, patch)}
+                          onEdit={() => setEditTask(task)}
+                          onDelete={() => deleteTask(task.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {completedRecurring.length > 0 && (
+                    <div>
+                      <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", letterSpacing:.7, textTransform:"uppercase", marginBottom:8 }}>Completed — returning soon ({completedRecurring.length})</div>
+                      {completedRecurring.map(task => (
+                        <RecurringRow key={task.id} task={task}
+                          onUpdate={(patch) => updateTask(task.id, patch)}
+                          onEdit={() => setEditTask(task)}
+                          onDelete={() => deleteTask(task.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab==="suggested" && (
+            <div style={{ flex:1, overflowY:"auto", padding:"15px 20px 110px" }}>
+              <div style={{ marginBottom:13 }}>
+                <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700, color:"var(--text)", marginBottom:3 }}>✨ Suggested Tasks</h2>
+                <p style={{ fontSize:15, color:"var(--text-muted)", lineHeight:1.5 }}>Check a task to add it to your list. It'll be replaced with a new one automatically.</p>
+              </div>
+              <div style={{ display:"flex", gap:7, marginBottom:14, flexWrap:"wrap" }}>
+                {["Health","Learning","Personal"].map(cat=>{
+                  const cc = catColors[cat];
+                  return (
+                    <button key={cat} onClick={()=>setSugCategory(cat)} style={{
+                      background:sugCategory===cat?cc+"22":"var(--btn-bg)", color:sugCategory===cat?cc:"var(--text-muted)",
+                      border:`1.5px solid ${sugCategory===cat?cc+"66":"var(--border)"}`,
+                      borderRadius:20, padding:"7px 15px", fontSize:12, fontWeight:700,
+                      cursor:"pointer", fontFamily:"'DM Sans',sans-serif", transition:"all .15s"
+                    }}>{cat==="Health"?"💪":cat==="Learning"?"📚":"🌱"} {cat}</button>
+                  );
+                })}
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:11, marginBottom:14, padding:"11px 13px", background:"var(--accent)10", border:"1px solid var(--accent)33", borderRadius:11 }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", marginBottom:1 }}>✦ Get fresh AI suggestions</div>
+                  <div style={{ fontSize:11, color:"var(--text-muted)" }}>Replace list with 5 personalized {sugCategory} tasks</div>
+                </div>
+                <button onClick={()=>getAiSuggestions(sugCategory)} disabled={aiSugLoading} style={{
+                  background:"var(--accent)", color:"#fff", border:"none", borderRadius:9,
+                  padding:"7px 14px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", flexShrink:0
+                }}>{aiSugLoading?"…":"Generate ✦"}</button>
+              </div>
+              {aiSugLoading ? (
+                <div style={{ textAlign:"center", padding:"30px 0", color:"var(--text-muted)" }}>
+                  <div style={{ fontSize:20, animation:"pulse 1.4s infinite", marginBottom:6 }}>✦</div>
+                  <div style={{ fontSize:13 }}>Generating {sugCategory} suggestions…</div>
+                </div>
+              ) : visibleSugs[sugCategory].map(item=>(
+                <div key={item._uid} className="t-anim">
+                  <SuggestedRow item={item} onAdd={addSuggestion} justAdded={justAddedIds.has(item._uid)} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Chat Panel ── */}
+          {chatOpen && (
+            <div className="chat-anim" style={{ width:315, borderLeft:"1px solid var(--border)", display:"flex", flexDirection:"column", background:"var(--chat-bg)", flexShrink:0 }}>
+              <div style={{ padding:"11px 13px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:7 }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, color:"var(--accent)" }}>✦ AI Assistant</div>
+                  {chatTask&&<div style={{ fontSize:13, color:"var(--text-muted)", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Re: {chatTask.title}</div>}
+                </div>
+                {chatTask&&<button onClick={openGeneralChat} style={{ ...iconBtn, width:"auto", padding:"0 7px", fontSize:10 }}>All tasks</button>}
+                <button onClick={()=>{setChatOpen(false);setChatTask(null);}} style={iconBtn}>✕</button>
+              </div>
+              <div style={{ flex:1, overflowY:"auto", padding:"11px 13px" }}>
+                {chatHistory.map((m,i)=>(
+                  <div key={i} style={{ marginBottom:9, display:"flex", flexDirection:m.role==="user"?"row-reverse":"row", gap:6, animation:"fadeIn .2s ease" }}>
+                    {m.role==="assistant"&&<div style={{ width:22, height:22, borderRadius:"50%", background:"var(--accent)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, flexShrink:0, marginTop:2 }}>✦</div>}
+                    <div style={{ maxWidth:"83%", background:m.role==="user"?"var(--accent)":"var(--bubble-bg)", color:m.role==="user"?"#fff":"var(--text)",
+                      borderRadius:m.role==="user"?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"8px 11px", fontSize:13, lineHeight:1.5 }}>
+                      {m.content}
+                    </div>
+                  </div>
+                ))}
+                {chatLoading&&(
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <div style={{ width:22, height:22, borderRadius:"50%", background:"var(--accent)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10 }}>✦</div>
+                    <div style={{ background:"var(--bubble-bg)", borderRadius:"12px 12px 12px 3px", padding:"9px 11px", display:"flex", gap:4 }}>
+                      {[0,1,2].map(j=><span key={j} style={{ width:5, height:5, borderRadius:"50%", background:"var(--accent)", animation:`pulse ${.8+j*.15}s infinite ${j*.15}s`, display:"inline-block" }} />)}
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+              <div style={{ padding:"10px 13px", borderTop:"1px solid var(--border)", display:"flex", gap:6 }}>
+                <input value={chatInput} onChange={e=>setChatInput(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendChat()}
+                  placeholder="Ask anything…"
+                  style={{ flex:1, background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:10, padding:"7px 10px", color:"var(--text)", fontSize:13, fontFamily:"'DM Sans',sans-serif", outline:"none" }} />
+                <button onClick={sendChat} disabled={chatLoading||!chatInput.trim()}
+                  style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:10, width:34, height:34, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>→</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── FABs ── */}
+        <div style={{ position:"fixed", bottom:24, right:24, display:"flex", flexDirection:"column", gap:10, alignItems:"flex-end", zIndex:200 }}>
+          {/* AI chat FAB */}
+          <button onClick={chatOpen?()=>{setChatOpen(false);setChatTask(null);}:openGeneralChat}
+            style={{ background:chatOpen?"var(--btn-bg)":"var(--card-bg)", color:chatOpen?"var(--text-muted)":"var(--accent)",
+              border:`2px solid ${chatOpen?"var(--border)":"var(--accent)55"}`, borderRadius:"50%",
+              width:44, height:44, fontSize:18, cursor:"pointer", boxShadow:"0 3px 14px #0005",
+              display:"flex", alignItems:"center", justifyContent:"center", transition:"all .2s" }}>
+            {chatOpen?"✕":"✦"}
+          </button>
+
+          {/* + Add Task FAB — tap to open modal, hold to record voice */}
+          <button
+            onPointerDown={() => {
+              longPressFired.current = false;
+              longPressTimer.current = setTimeout(() => {
+                longPressFired.current = true;
+                startVoiceTask();
+              }, 600);
+            }}
+            onPointerUp={() => { clearTimeout(longPressTimer.current); if (!longPressFired.current) setAddOpen(true); }}
+            onPointerLeave={() => clearTimeout(longPressTimer.current)}
+            style={{
+              background:"var(--header-bg)",
+              color:"var(--accent)",
+              border:"2px solid var(--accent)",
+              borderRadius:12,
+              padding:"14px 24px",
+              fontSize:16, fontWeight:700,
+              cursor:"pointer",
+              fontFamily:"'DM Sans',sans-serif",
+              boxShadow:"0 3px 14px #0005",
+              display:"flex", alignItems:"center", gap:6,
+              transition:"all .2s", whiteSpace:"nowrap",
+              userSelect:"none", WebkitUserSelect:"none",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.background="var(--accent)";e.currentTarget.style.color="#fff";}}
+            onMouseLeave={e=>{e.currentTarget.style.background="var(--header-bg)";e.currentTarget.style.color="var(--accent)";}}>
+            <span style={{ fontSize:18, lineHeight:1, fontWeight:300 }}>+</span>
+            Add Task
+          </button>
+        </div>
+
+        {/* Voice recording overlay */}
+        {(voiceRecording || voiceLoading) && (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)",
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            zIndex:1500, gap:14 }}>
+            <div style={{ fontSize:60, animation:voiceRecording?"pulse 1s infinite":"none" }}>🎤</div>
+            <div style={{ color:"#fff", fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800 }}>
+              {voiceLoading ? "Creating task…" : "Listening…"}
+            </div>
+            <div style={{ color:"rgba(255,255,255,0.55)", fontSize:14, textAlign:"center", maxWidth:240 }}>
+              {voiceLoading ? "AI is analysing your voice" : "Speak your task, then release the button"}
+            </div>
+            {voiceRecording && (
+              <div style={{ display:"flex", gap:4, alignItems:"flex-end", height:32, marginTop:4 }}>
+                {[14,22,30,22,14].map((h,i) => (
+                  <div key={i} style={{ width:5, borderRadius:99, background:"var(--accent)",
+                    height:h, animation:`pulse ${0.5+i*0.12}s infinite ${i*0.1}s` }} />
+                ))}
+              </div>
+            )}
+            {voiceRecording && (
+              <button onClick={stopVoice} style={{ marginTop:10,
+                background:"rgba(255,255,255,0.12)", color:"#fff",
+                border:"1px solid rgba(255,255,255,0.25)", borderRadius:12,
+                padding:"10px 28px", fontSize:14, fontWeight:600, cursor:"pointer",
+                fontFamily:"'DM Sans',sans-serif" }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Toast */}
+        {toast && (
+          <UndoToast
+            message={toast.message}
+            progress={toastProgress}
+            hasUndo={!!toast.undo}
+            onUndo={()=>{ toast.undo?.(); dismissToast(); }}
+            onDismiss={dismissToast}
+          />
+        )}
+
+        {/* Tutorial overlay */}
+        {showTutorial && <Tutorial onDone={closeTutorial} />}
+
+        {/* Add Task Modal — rendered at top level, not inside any overflow:hidden parent */}
+        {addOpen && <AddTaskModal onClose={()=>setAddOpen(false)} onAdd={addTask} />}
+        {editTask && <EditTaskModal task={editTask} onClose={()=>setEditTask(null)} onSave={saveEditedTask} />}
+      </div>
+    </>
+  );
+}
+
+// ── Themes ────────────────────────────────────────────────────────────────────
+const darkTheme = { style: {
+  "--bg":"#000000","--header-bg":"#111111","--card-bg":"#1a1a1a","--chat-bg":"#0d0d0d",
+  "--bubble-bg":"#222222","--input-bg":"#1e1e1e","--btn-bg":"#222222","--tag-bg":"#1a1a2e","--border":"#333333",
+  "--text":"#ffffff","--text-muted":"#aaaaaa","--accent":"#a99cff",
+  "--fresh":"#4eda9e","--aging":"#fcd34d","--stale":"#fb923c","--crit":"#fc8181",
+}};
+const lightTheme = { style: {
+  "--bg":"#f5f5f5","--header-bg":"#ffffff","--card-bg":"#ffffff","--chat-bg":"#f9f9f9",
+  "--bubble-bg":"#efefef","--input-bg":"#f0f0f0","--btn-bg":"#ebebeb","--tag-bg":"#ede9ff","--border":"#d8d8d8",
+  "--text":"#111111","--text-muted":"#666666","--accent":"#6355e8",
+  "--fresh":"#059669","--aging":"#d97706","--stale":"#d9622a","--crit":"#dc2626",
+}};
+
+// Mount the app into #root
+try {
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    React.createElement(App)
+  );
+  hideSplash();
+} catch(e) {
+  console.error('Mount error:', e);
+  document.getElementById('splash').style.display = 'none';
+  var err = document.getElementById('error-screen');
+  err.style.display = 'flex';
+  err.querySelector('p').textContent = 'App failed to start: ' + e.message;
+}
+</script>
+</body>
+</html>
