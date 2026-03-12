@@ -2,8 +2,16 @@ package com.taskflow.app;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.AlarmManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -32,20 +40,21 @@ import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final int REQUEST_AUDIO_PERMISSION = 1;
+    private static final int REQUEST_AUDIO_PERMISSION        = 1;
+    private static final int REQUEST_LOCATION_PERMISSION     = 2;
+    private static final int REQUEST_NOTIFICATION_PERMISSION = 3;
+    private static final String NOTIF_CHANNEL_ID             = "taskflow_channel";
 
     private WebView webView;
     private WebViewAssetLoader assetLoader;
     private PermissionRequest pendingPermissionRequest;
 
-    // Static inner class — avoids implicit MainActivity reference issues on background thread
+    // ── Groq API bridge (static — no Activity reference) ──────────────────────
     static class ApiBridge {
 
         @JavascriptInterface
         public String groqPost(String apiKey, String body) {
-            // Trim key to remove any invisible chars, newlines, or spaces
             String cleanKey = apiKey == null ? "" : apiKey.trim();
-
             HttpURLConnection conn = null;
             try {
                 URL url = new URL("https://api.groq.com/openai/v1/chat/completions");
@@ -56,29 +65,19 @@ public class MainActivity extends AppCompatActivity {
                 conn.setConnectTimeout(20000);
                 conn.setReadTimeout(40000);
                 conn.setUseCaches(false);
-
-                // Set headers explicitly — order matters for some servers
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 conn.setRequestProperty("Authorization", "Bearer " + cleanKey);
                 conn.setRequestProperty("Accept", "application/json");
 
-                // Write body as UTF-8
                 byte[] input = body.getBytes(StandardCharsets.UTF_8);
                 conn.setRequestProperty("Content-Length", String.valueOf(input.length));
                 OutputStream os = conn.getOutputStream();
-                os.write(input);
-                os.flush();
-                os.close();
+                os.write(input); os.flush(); os.close();
 
                 int status = conn.getResponseCode();
-
-                // Read response or error stream
                 java.io.InputStream stream;
-                try {
-                    stream = conn.getInputStream();
-                } catch (Exception e) {
-                    stream = conn.getErrorStream();
-                }
+                try { stream = conn.getInputStream(); }
+                catch (Exception e) { stream = conn.getErrorStream(); }
 
                 BufferedReader reader = new BufferedReader(
                     new InputStreamReader(stream, StandardCharsets.UTF_8));
@@ -87,10 +86,7 @@ public class MainActivity extends AppCompatActivity {
                 while ((line = reader.readLine()) != null) sb.append(line);
                 reader.close();
 
-                String responseBody = sb.toString();
-
-                // Wrap in status envelope — body is raw JSON from Groq
-                return "{\"status\":" + status + ",\"body\":" + responseBody + "}";
+                return "{\"status\":" + status + ",\"body\":" + sb.toString() + "}";
 
             } catch (Exception e) {
                 String msg = e.getMessage() != null
@@ -102,13 +98,114 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Debug method — call from JS to verify bridge is working
         @JavascriptInterface
-        public String ping() {
-            return "pong";
+        public String ping() { return "pong"; }
+    }
+
+    // ── Location bridge ────────────────────────────────────────────────────────
+    static class LocationBridge {
+        private final Context ctx;
+
+        LocationBridge(Context context) { this.ctx = context.getApplicationContext(); }
+
+        /** Returns JSON {lat, lng} or {error: "reason"} */
+        @JavascriptInterface
+        public String getLocation() {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return "{\"error\":\"permission_denied\"}";
+            }
+            try {
+                LocationManager lm = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
+                Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if (loc == null) loc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (loc == null) loc = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
+                if (loc == null) return "{\"error\":\"no_location\"}";
+                return "{\"lat\":" + loc.getLatitude() + ",\"lng\":" + loc.getLongitude() + "}";
+            } catch (Exception e) {
+                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "error";
+                return "{\"error\":\"" + msg + "\"}";
+            }
+        }
+
+        /** Geocodes an address string to {lat, lng} or {error: "reason"} */
+        @JavascriptInterface
+        public String geocodeAddress(String address) {
+            if (address == null || address.trim().isEmpty()) return "{\"error\":\"empty\"}";
+            if (!android.location.Geocoder.isPresent()) return "{\"error\":\"geocoder_unavailable\"}";
+            try {
+                android.location.Geocoder geocoder =
+                    new android.location.Geocoder(ctx, java.util.Locale.getDefault());
+                @SuppressWarnings("deprecation")
+                java.util.List<android.location.Address> list =
+                    geocoder.getFromLocationName(address.trim(), 1);
+                if (list == null || list.isEmpty()) return "{\"error\":\"not_found\"}";
+                android.location.Address addr = list.get(0);
+                return "{\"lat\":" + addr.getLatitude() + ",\"lng\":" + addr.getLongitude() + "}";
+            } catch (java.io.IOException e) {
+                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "io_error";
+                return "{\"error\":\"" + msg + "\"}";
+            } catch (Exception e) {
+                return "{\"error\":\"unknown\"}";
+            }
         }
     }
 
+    // ── Notification bridge ────────────────────────────────────────────────────
+    static class NotificationBridge {
+        private final Context ctx;
+
+        NotificationBridge(Context context) { this.ctx = context.getApplicationContext(); }
+
+        /**
+         * Schedule a notification. triggerTimeMs is epoch milliseconds.
+         * Called from JS when a task with dueDate+dueTime+reminderMinutes is saved.
+         */
+        @JavascriptInterface
+        public void scheduleNotification(String taskId, String title, String body, long triggerTimeMs) {
+            if (triggerTimeMs <= System.currentTimeMillis()) return;
+
+            Intent intent = new Intent(ctx, NotificationReceiver.class);
+            intent.putExtra("title", title);
+            intent.putExtra("body", body);
+            intent.putExtra("notifId", taskId.hashCode());
+
+            int reqCode = taskId.hashCode();
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, reqCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // API 31+
+                if (am.canScheduleExactAlarms()) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTimeMs, pi);
+                } else {
+                    am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTimeMs, pi);
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { // API 23+
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTimeMs, pi);
+            } else {
+                am.setExact(AlarmManager.RTC_WAKEUP, triggerTimeMs, pi);
+            }
+        }
+
+        /** Cancel a previously scheduled notification for a task. */
+        @JavascriptInterface
+        public void cancelNotification(String taskId) {
+            Intent intent = new Intent(ctx, NotificationReceiver.class);
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, taskId.hashCode(), intent,
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE);
+            if (pi == null) return;
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            if (am != null) am.cancel(pi);
+            pi.cancel();
+        }
+    }
+
+    // ── Activity lifecycle ─────────────────────────────────────────────────────
     @SuppressLint({"SetJavaScriptEnabled", "ObsoleteSdkInt"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -120,6 +217,36 @@ public class MainActivity extends AppCompatActivity {
             getWindow().getDecorView().setSystemUiVisibility(
                 android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             );
+        }
+
+        // ── Create notification channel (required on API 26+) ──────────────
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                NOTIF_CHANNEL_ID, "TaskFlow Reminders", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Task due-time reminders");
+            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
+                .createNotificationChannel(channel);
+        }
+
+        // ── Request runtime permissions upfront ───────────────────────────
+        // Location
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                },
+                REQUEST_LOCATION_PERMISSION);
+        }
+        // Notifications (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_NOTIFICATION_PERMISSION);
+            }
         }
 
         setContentView(R.layout.activity_main);
@@ -148,7 +275,10 @@ public class MainActivity extends AppCompatActivity {
             "Chrome/121.0.0.0 Mobile Safari/537.36"
         );
 
-        webView.addJavascriptInterface(new ApiBridge(), "Android");
+        // Register all bridges
+        webView.addJavascriptInterface(new ApiBridge(),                    "Android");
+        webView.addJavascriptInterface(new LocationBridge(this),     "AndroidLocation");
+        webView.addJavascriptInterface(new NotificationBridge(this), "AndroidNotif");
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -186,6 +316,7 @@ public class MainActivity extends AppCompatActivity {
                 request.deny();
             }
         });
+
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
@@ -201,6 +332,7 @@ public class MainActivity extends AppCompatActivity {
             }
             pendingPermissionRequest = null;
         }
+        // Location + notification grants are handled automatically by the bridge methods
     }
 
     @Override

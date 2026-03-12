@@ -187,6 +187,51 @@ function getNextOccurrence(recurrence) {
 }
 const REC_DAY_NAMES = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
+// ── Location helpers ──────────────────────────────────────────────────────────
+function getDistanceKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2
+    + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function locationSort(active, ctx) {
+  if (ctx === 'neutral') return active;
+  const workCats = ['Work'];
+  const homeCats = ['Home','Personal','Health'];
+  const priority = ctx === 'work' ? workCats : homeCats;
+  return [...active].sort((a, b) => {
+    return (priority.includes(a.category) ? 0 : 1) - (priority.includes(b.category) ? 0 : 1);
+  });
+}
+
+// ── Notification helpers ───────────────────────────────────────────────────────
+function scheduleTaskNotification(task) {
+  if (!window.AndroidNotif) return;
+  if (!task.dueDate || !task.dueTime || !task.reminderMinutes) return;
+  try {
+    const [year, month, day] = task.dueDate.split('-').map(Number);
+    const [h, m] = task.dueTime.split(':').map(Number);
+    const taskTime = new Date(year, month - 1, day, h, m, 0, 0);
+    const triggerTime = taskTime.getTime() - task.reminderMinutes * 60000;
+    if (triggerTime > Date.now()) {
+      window.AndroidNotif.scheduleNotification(
+        task.id,
+        `Reminder: ${task.title}`,
+        `Due in ${task.reminderMinutes} min${task.reminderMinutes !== 1 ? 's' : ''}`,
+        triggerTime
+      );
+    }
+  } catch {}
+}
+
+function cancelTaskNotification(taskId) {
+  if (!window.AndroidNotif) return;
+  try { window.AndroidNotif.cancelNotification(taskId); } catch {}
+}
+
 // ── AI ────────────────────────────────────────────────────────────────────────
 // ── Groq API key — get your FREE key at console.groq.com → API Keys ──────────
 const GROQ_API_KEY = "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";
@@ -450,6 +495,18 @@ Give ONE short, specific, actionable insight about this task in 1-2 sentences. B
         {task.dueDate && <>
           <span style={{ fontSize:13, color:onCardMuted }}>·</span>
           <span style={{ fontSize:13, color:onCardMuted }}>📅 {new Date(task.dueDate).toLocaleDateString()}</span>
+        </>}
+        {task.dueTime && <>
+          <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+          <span style={{ fontSize:13, color:onCardMuted }}>⏰ {task.dueTime}</span>
+        </>}
+        {task.reminderMinutes && task.dueDate && task.dueTime && <>
+          <span style={{ fontSize:13, color:onCardMuted }}>·</span>
+          <span style={{ fontSize:11, padding:"2px 7px", borderRadius:20,
+            background: cardColor ? "rgba(0,0,0,0.18)" : "var(--accent)15",
+            color: cardColor ? textColor : "var(--accent)", fontWeight:700 }}>
+            🔔 {task.reminderMinutes < 60 ? `${task.reminderMinutes}min` : `${task.reminderMinutes/60}hr`} before
+          </span>
         </>}
         {!isCompleted && (
           <span style={{ fontSize:11, padding:"2px 7px", borderRadius:20,
@@ -854,6 +911,26 @@ function TaskFormFields({ t, setT, aiPicked }) {
           <input type="date" value={t.dueDate||""} onChange={e=>setT(v=>({...v,dueDate:e.target.value}))}
             style={fieldStyle} />
         </div>
+        <div>
+          <label style={labelStyle}>DUE TIME</label>
+          <input type="time" value={t.dueTime||""} onChange={e=>setT(v=>({...v,dueTime:e.target.value}))}
+            style={fieldStyle} />
+        </div>
+        {(t.dueDate && t.dueTime) ? (
+          <div style={{ gridColumn:"1 / -1" }}>
+            <label style={labelStyle}>🔔 REMINDER</label>
+            <select value={t.reminderMinutes||""} onChange={e=>setT(v=>({...v,reminderMinutes:e.target.value?Number(e.target.value):null}))}
+              style={{ ...fieldStyle, width:"100%" }}>
+              <option value="">No reminder</option>
+              <option value="5">5 minutes before</option>
+              <option value="10">10 minutes before</option>
+              <option value="15">15 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="120">2 hours before</option>
+            </select>
+          </div>
+        ) : null}
       </div>
       <div>
         <label style={labelStyle}>NOTES</label>
@@ -931,7 +1008,7 @@ function TaskFormFields({ t, setT, aiPicked }) {
 
 // ── Add Task Modal ────────────────────────────────────────────────────────────
 function AddTaskModal({ onClose, onAdd }) {
-  const DEFAULTS = { title:"", urgency:"medium", category:"Work", preferredTime:"anytime", description:"", dueDate:"", notes:"", recurrence:null };
+  const DEFAULTS = { title:"", urgency:"medium", category:"Work", preferredTime:"anytime", description:"", dueDate:"", dueTime:"", notes:"", recurrence:null, reminderMinutes:null };
   const [t, setT] = useState(DEFAULTS);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPicked, setAiPicked] = useState(null); // tracks which fields AI filled
@@ -1059,8 +1136,10 @@ function EditTaskModal({ task, onClose, onSave }) {
     preferredTime: task.preferredTime || "anytime",
     category: task.category || "Work",
     dueDate: task.dueDate || "",
+    dueTime: task.dueTime || "",
     notes: task.notes || "",
     recurrence: task.recurrence || null,
+    reminderMinutes: task.reminderMinutes || null,
   });
 
   const submit = () => { if (!t.title.trim()) return; onSave(task.id, t); onClose(); };
@@ -1107,6 +1186,109 @@ function EditTaskModal({ task, onClose, onSave }) {
   );
 }
 
+// ── Settings Modal ────────────────────────────────────────────────────────────
+function SettingsModal({ settings, onSave, onClose, showToast }) {
+  const [homeAddr, setHomeAddr] = useState(settings.homeAddr || "");
+  const [workAddr, setWorkAddr] = useState(settings.workAddr || "");
+  const [local, setLocal]       = useState(settings);
+  const [geoLoading, setGeoLoading] = useState(null); // 'home' | 'work' | null
+
+  const geocodeAndSave = (type, address) => {
+    if (!address.trim()) { showToast("Please enter an address", null); return; }
+    if (!window.AndroidLocation) {
+      showToast("GPS geocoding is available on device", null);
+      return;
+    }
+    setGeoLoading(type);
+    try {
+      const result = window.AndroidLocation.geocodeAddress(address.trim());
+      const coords = JSON.parse(result);
+      if (coords.error) {
+        showToast("Address not found — try a more specific address", null);
+      } else {
+        const updated = {
+          ...local,
+          [type === 'home' ? 'homeAddr'   : 'workAddr']:   address.trim(),
+          [type === 'home' ? 'homeCoords' : 'workCoords']: { lat: coords.lat, lng: coords.lng },
+        };
+        setLocal(updated);
+        showToast(`✓ ${type === 'home' ? 'Home' : 'Work'} location saved`, null);
+      }
+    } catch { showToast("Geocoding error", null); }
+    setGeoLoading(null);
+  };
+
+  const handleBackdrop = (e) => { if (e.target === e.currentTarget) { onSave(local); onClose(); } };
+
+  return (
+    <div onMouseDown={handleBackdrop}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{ background:"var(--card-bg)", borderRadius:18, padding:"22px 24px",
+          width:"100%", maxWidth:440, maxHeight:"90vh", overflowY:"auto",
+          boxShadow:"0 24px 70px rgba(0,0,0,0.5)", animation:"popIn .22s ease" }}>
+
+        <div style={{ display:"flex", alignItems:"center", marginBottom:18 }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:800, color:"var(--text)", flex:1 }}>⚙️ Settings</h2>
+          <button onMouseDown={e=>{e.stopPropagation();onSave(local);onClose();}} style={{ ...iconBtn, borderRadius:"50%" }}>✕</button>
+        </div>
+
+        {/* Location section */}
+        <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", letterSpacing:.6, marginBottom:6 }}>📍 LOCATION SMART SORT</div>
+        <p style={{ fontSize:13, color:"var(--text-muted)", marginBottom:14, lineHeight:1.55 }}>
+          Save your home and work addresses so Smart Sort can prioritise tasks based on where you currently are.
+        </p>
+
+        {/* Home */}
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", marginBottom:5 }}>🏠 HOME ADDRESS</div>
+          <div style={{ display:"flex", gap:7 }}>
+            <input placeholder="e.g. 10 Downing St, London"
+              value={homeAddr} onChange={e=>setHomeAddr(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&geocodeAndSave('home',homeAddr)}
+              style={{ ...inputStyle, flex:1, fontSize:13 }} />
+            <button onClick={()=>geocodeAndSave('home',homeAddr)} disabled={geoLoading==='home'}
+              style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:10,
+                padding:"0 16px", fontSize:13, fontWeight:700, cursor:"pointer",
+                fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>
+              {geoLoading==='home' ? "…" : "Save"}
+            </button>
+          </div>
+          {local.homeCoords && <div style={{ fontSize:11, color:"var(--fresh)", marginTop:4 }}>✓ Location set</div>}
+        </div>
+
+        {/* Work */}
+        <div style={{ marginBottom:22 }}>
+          <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", marginBottom:5 }}>💼 WORK ADDRESS</div>
+          <div style={{ display:"flex", gap:7 }}>
+            <input placeholder="e.g. 1 Infinite Loop, Cupertino"
+              value={workAddr} onChange={e=>setWorkAddr(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&geocodeAndSave('work',workAddr)}
+              style={{ ...inputStyle, flex:1, fontSize:13 }} />
+            <button onClick={()=>geocodeAndSave('work',workAddr)} disabled={geoLoading==='work'}
+              style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:10,
+                padding:"0 16px", fontSize:13, fontWeight:700, cursor:"pointer",
+                fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>
+              {geoLoading==='work' ? "…" : "Save"}
+            </button>
+          </div>
+          {local.workCoords && <div style={{ fontSize:11, color:"var(--fresh)", marginTop:4 }}>✓ Location set</div>}
+        </div>
+
+        <div style={{ display:"flex", justifyContent:"flex-end" }}>
+          <button onMouseDown={e=>{e.stopPropagation();onSave(local);onClose();}}
+            style={{ background:"var(--accent)", color:"#fff", border:"none",
+              borderRadius:10, padding:"9px 22px", fontSize:13, fontWeight:700,
+              cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Done ✓
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App() {
   const tod = timeOfDayLabel();
@@ -1115,6 +1297,7 @@ function App() {
   const STORAGE_KEY   = "taskflow_tasks_v1";
   const DARK_KEY      = "taskflow_dark_v2";
   const TUTORIAL_KEY  = "taskflow_tutorial_done";
+  const SETTINGS_KEY  = "taskflow_settings_v1";
 
   function loadTasks() {
     try {
@@ -1163,10 +1346,20 @@ function App() {
   const [filter, setFilter]         = useState("all");
   const [searchQ, setSearchQ]       = useState("");
   const [dark, setDark] = useState(() => loadDark());
-  const [orgSuggestion, setOrgSuggestion] = useState("");
-  const [orgOrder, setOrgOrder]     = useState(null);
-  const [aiLoading, setAiLoading]   = useState(false);
   const [aiSugLoading, setAiSugLoading] = useState(false);
+
+  // Settings & Smart Sort
+  const [settings, setSettings] = useState(() => {
+    try {
+      const s = localStorage.getItem(SETTINGS_KEY);
+      return s ? JSON.parse(s) : { homeAddr:'', homeCoords:null, workAddr:'', workCoords:null };
+    } catch { return { homeAddr:'', homeCoords:null, workAddr:'', workCoords:null }; }
+  });
+  const [settingsOpen, setSettingsOpen]   = useState(false);
+  const [smartSortOn, setSmartSortOn]     = useState(false);
+  const [preSortOrder, setPreSortOrder]   = useState(null);
+  const [locationCtx, setLocationCtx]     = useState(null); // 'work' | 'home' | 'neutral'
+  const [locationLoading, setLocationLoading] = useState(false);
 
   // Chat
   const [chatOpen, setChatOpen]       = useState(false);
@@ -1254,6 +1447,11 @@ function App() {
 
   // ── Task ops ───────────────────────────────────────────────────────────────
   const updateTask = (id, patch) => {
+    if (patch.done === true)  cancelTaskNotification(id);
+    if (patch.done === false) {
+      const task = tasks.find(t => t.id === id);
+      if (task) scheduleTaskNotification({ ...task, ...patch });
+    }
     setTasks(prev => prev.map(t => {
       if (t.id !== id) return t;
       const updated = {...t, ...patch};
@@ -1267,19 +1465,30 @@ function App() {
     }));
   };
   const deleteTask = (id) => {
+    cancelTaskNotification(id);
     const removed = tasks.find(t=>t.id===id);
     setTasks(prev => prev.filter(t=>t.id!==id));
-    if (removed) showToast(`Removed "${removed.title}"`, () => setTasks(prev => [...prev, removed]));
+    if (removed) showToast(`Removed "${removed.title}"`, () => {
+      setTasks(prev => [...prev, removed]);
+      scheduleTaskNotification(removed); // reschedule if undone
+    });
   };
   const [editTask, setEditTask] = useState(null); // task being edited
 
   const addTask = (nt) => {
-    setTasks(prev => [...prev, { ...nt, id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null }]);
+    const newId = uid();
+    const newTask = { ...nt, id:newId, done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null };
+    setTasks(prev => [...prev, newTask]);
+    scheduleTaskNotification(newTask);
     setAddOpen(false);
   };
 
   const saveEditedTask = (id, patch) => {
-    setTasks(prev => prev.map(t => t.id===id ? {...t, ...patch, lastUpdated:Date.now()} : t));
+    cancelTaskNotification(id);
+    const base    = tasks.find(t => t.id === id) || {};
+    const updated = { ...base, ...patch, lastUpdated:Date.now() };
+    scheduleTaskNotification(updated);
+    setTasks(prev => prev.map(t => t.id===id ? updated : t));
   };
   const clearCompleted = () => {
     const count = tasks.filter(t=>t.done).length;
@@ -1442,32 +1651,63 @@ For the recurrence field, detect any repetition in the speech:
     setChatLoading(false);
   };
 
-  // ── Smart sort ─────────────────────────────────────────────────────────────
-  const applyOrgOrder = () => {
-    if (!orgOrder) return;
-    setTasks(prev => {
-      const done = prev.filter(t=>t.done);
-      const active = prev.filter(t=>!t.done);
-      const reordered = [];
-      orgOrder.forEach(id => { const t=active.find(x=>x.id===id); if(t) reordered.push(t); });
-      active.forEach(t => { if(!reordered.find(x=>x.id===t.id)) reordered.push(t); });
-      return [...reordered,...done];
-    });
-    setOrgSuggestion(""); setOrgOrder(null);
-    showToast("✓ Task order applied!", null);
-  };
+  // Persist settings
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  }, [settings]);
 
-  const getOrgSuggestion = async () => {
-    setAiLoading(true); setOrgSuggestion(""); setOrgOrder(null);
-    const active = tasks.filter(t=>!t.done);
-    const taskList = active.map((t,i)=>`${i+1}. ID:${t.id} title:"${t.title}" urgency:${t.urgency} time:${t.preferredTime||"anytime"} staleness:${staleness(t)}`).join("\n");
-    try {
-      const r = await askClaude([{ role:"user", content:`It is ${tod} (${new Date().toLocaleTimeString()}). Tasks:\n${taskList}\n\nWrite a numbered priority list using the task TITLE (not the ID) with one short reason per item.\n\nThen on a new line write exactly: ORDER_JSON: followed by a JSON array of the task IDs in priority order. Example: ORDER_JSON: ["id1","id2"]` }]);
-      const jsonMatch = r.match(/ORDER_JSON:\s*(\[.*?\])/s);
-      if (jsonMatch) { try { setOrgOrder(JSON.parse(jsonMatch[1])); } catch {} }
-      setOrgSuggestion(r.replace(/ORDER_JSON:.*$/s,"").trim());
-    } catch { setOrgSuggestion("Could not load. Check connection."); }
-    setAiLoading(false);
+  // ── Smart Sort (location-based toggle) ────────────────────────────────────
+  const toggleSmartSort = () => {
+    if (smartSortOn) {
+      // Turn OFF — restore original order
+      if (preSortOrder) {
+        setTasks(prev => {
+          const done   = prev.filter(t => t.done);
+          const active = prev.filter(t => !t.done);
+          const restored = [];
+          preSortOrder.forEach(id => { const t = active.find(x => x.id === id); if (t) restored.push(t); });
+          active.forEach(t => { if (!restored.find(x => x.id === t.id)) restored.push(t); });
+          return [...restored, ...done];
+        });
+      }
+      setSmartSortOn(false);
+      setPreSortOrder(null);
+      setLocationCtx(null);
+      showToast("Smart Sort off — original order restored", null);
+    } else {
+      // Turn ON — get location, determine context, sort
+      setLocationLoading(true);
+      const currentActive = tasks.filter(t => !t.done);
+      setPreSortOrder(currentActive.map(t => t.id));
+
+      let ctx = 'neutral';
+      try {
+        if (window.AndroidLocation && settings.homeCoords && settings.workCoords) {
+          const locStr = window.AndroidLocation.getLocation();
+          const loc    = JSON.parse(locStr);
+          if (!loc.error) {
+            const homeDist = getDistanceKm(loc.lat, loc.lng, settings.homeCoords.lat, settings.homeCoords.lng);
+            const workDist = getDistanceKm(loc.lat, loc.lng, settings.workCoords.lat, settings.workCoords.lng);
+            ctx = workDist < homeDist ? 'work' : 'home';
+          }
+        } else if (!settings.homeCoords || !settings.workCoords) {
+          showToast("Tap ⚙️ Settings to set home & work addresses", null);
+        }
+      } catch {}
+
+      setLocationCtx(ctx);
+      setSmartSortOn(true);
+      setLocationLoading(false);
+
+      setTasks(prev => {
+        const done   = prev.filter(t => t.done);
+        const active = prev.filter(t => !t.done);
+        return [...locationSort(active, ctx), ...done];
+      });
+
+      const label = ctx === 'work' ? 'Work tasks first 💼' : ctx === 'home' ? 'Home & personal first 🏠' : 'Smart Sort on';
+      showToast(`📍 ${label}`, null);
+    }
   };
 
   // ── Derived lists ──────────────────────────────────────────────────────────
@@ -1516,6 +1756,9 @@ For the recurrence field, detect any repetition in the speech:
           </div>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
             <div style={{ display:"flex", gap:6 }}>
+              <button onClick={()=>setSettingsOpen(true)}
+                style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
+                title="Settings">⚙️</button>
               <button onClick={()=>setShowTutorial(true)}
                 style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
                 title="Help / Tutorial">❓</button>
@@ -1565,8 +1808,14 @@ For the recurrence field, detect any repetition in the speech:
               <div style={{ display:"flex", gap:7, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
                 <input placeholder="Search tasks…" value={searchQ} onChange={e=>setSearchQ(e.target.value)}
                   style={{ flex:1, minWidth:120, background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:10, padding:"7px 11px", color:"var(--text)", fontSize:13, fontFamily:"'DM Sans',sans-serif", outline:"none" }} />
-                <button onClick={getOrgSuggestion} disabled={aiLoading} style={{ background:"var(--accent)22", color:"var(--accent)", border:"1px solid var(--accent)44", borderRadius:8, padding:"6px 12px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-                  {aiLoading?"✦ …":"✦ Smart Sort"}
+                <button onClick={toggleSmartSort} disabled={locationLoading} style={{
+                  background: smartSortOn ? "var(--accent)" : "var(--accent)22",
+                  color: smartSortOn ? "#fff" : "var(--accent)",
+                  border:`1px solid ${smartSortOn ? "var(--accent)" : "var(--accent)44"}`,
+                  borderRadius:8, padding:"6px 12px", fontSize:12, fontWeight:700,
+                  cursor:"pointer", fontFamily:"'DM Sans',sans-serif", transition:"all .2s",
+                }}>
+                  {locationLoading ? "📍 …" : smartSortOn ? "📍 Smart Sort ON" : "📍 Smart Sort"}
                 </button>
               </div>
 
@@ -1575,21 +1824,23 @@ For the recurrence field, detect any repetition in the speech:
                 <span>⠿</span><span>Drag to reorder · 🎨 to color · ✦ to ask AI</span>
               </div>
 
-              {/* Smart sort result */}
-              {orgSuggestion && (
-                <div style={{ background:"var(--accent)12", border:"1px solid var(--accent)44", borderRadius:12, padding:"11px 13px", marginBottom:12, animation:"fadeIn .3s ease" }}>
-                  <div style={{ fontSize:10, fontWeight:700, color:"var(--accent)", marginBottom:4, letterSpacing:.5 }}>✦ AI PRIORITY — {tod.toUpperCase()}</div>
-                  <pre style={{ fontSize:13, color:"var(--text)", whiteSpace:"pre-wrap", fontFamily:"'DM Sans',sans-serif", lineHeight:1.6, margin:0 }}>{orgSuggestion}</pre>
-                  <div style={{ display:"flex", gap:10, marginTop:10, alignItems:"center" }}>
-                    {orgOrder && orgOrder.length>0 && (
-                      <button onClick={applyOrgOrder} style={{
-                        background:"none", color:"var(--accent)",
-                        border:"none", padding:0,
-                        fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
-                        textDecoration:"underline", textUnderlineOffset:3,
-                      }}>↕ Apply this order</button>
-                    )}
-                    <button onClick={()=>{setOrgSuggestion("");setOrgOrder(null);}} style={{ fontSize:12, color:"var(--text-muted)", background:"none", border:"none", cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>dismiss</button>
+              {/* Smart Sort location context banner */}
+              {smartSortOn && (
+                <div style={{ background:"var(--accent)12", border:"1px solid var(--accent)44", borderRadius:12,
+                  padding:"10px 13px", marginBottom:12, animation:"fadeIn .3s ease",
+                  display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:20 }}>
+                    {locationCtx==='work' ? '💼' : locationCtx==='home' ? '🏠' : '📍'}
+                  </span>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:"var(--accent)" }}>
+                      {locationCtx==='work' ? "You're at work" : locationCtx==='home' ? "You're at home" : "Smart Sort active"}
+                    </div>
+                    <div style={{ fontSize:11, color:"var(--text-muted)" }}>
+                      {locationCtx==='work' ? "Work tasks shown first"
+                        : locationCtx==='home' ? "Home & personal tasks shown first"
+                        : "Tap ⚙️ to set home & work addresses"}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1887,6 +2138,14 @@ For the recurrence field, detect any repetition in the speech:
         {/* Add Task Modal — rendered at top level, not inside any overflow:hidden parent */}
         {addOpen && <AddTaskModal onClose={()=>setAddOpen(false)} onAdd={addTask} />}
         {editTask && <EditTaskModal task={editTask} onClose={()=>setEditTask(null)} onSave={saveEditedTask} />}
+        {settingsOpen && (
+          <SettingsModal
+            settings={settings}
+            onSave={s => setSettings(s)}
+            onClose={() => setSettingsOpen(false)}
+            showToast={showToast}
+          />
+        )}
       </div>
     </>
   );
