@@ -187,24 +187,29 @@ function getNextOccurrence(recurrence) {
 }
 const REC_DAY_NAMES = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
-// ── Location helpers ──────────────────────────────────────────────────────────
-function getDistanceKm(lat1, lng1, lat2, lng2) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)**2
-    + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-
-function locationSort(active, ctx) {
-  if (ctx === 'neutral') return active;
-  const workCats = ['Work'];
-  const homeCats = ['Home','Personal','Health'];
-  const priority = ctx === 'work' ? workCats : homeCats;
-  return [...active].sort((a, b) => {
-    return (priority.includes(a.category) ? 0 : 1) - (priority.includes(b.category) ? 0 : 1);
-  });
+// ── AI Smart Sort ─────────────────────────────────────────────────────────────
+async function getAiSortOrder(activeTasks) {
+  if (activeTasks.length <= 1) return activeTasks.map(t => t.id);
+  const now = new Date();
+  const hour = now.getHours();
+  const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+  const summaries = activeTasks.map(t => ({
+    id: t.id,
+    title: t.title,
+    urgency: t.urgency || 'medium',
+    category: t.category || 'Other',
+    preferredTime: t.preferredTime || 'anytime',
+    dueDate: t.dueDate || null,
+    staleHours: Math.round((Date.now() - (t.lastUpdated || t.createdAt || Date.now())) / 3600000),
+  }));
+  const system = `You are a task prioritization expert. Return ONLY a valid JSON array of task IDs in optimal order to tackle today. No explanation, no markdown, just the JSON array.`;
+  const user = `Current time of day: ${timeOfDay} (${hour}:${String(now.getMinutes()).padStart(2,'0')}). Rank these tasks considering: urgency (critical>high>medium>low), due date proximity, whether preferredTime matches current time of day, and staleness (more stale hours = more overdue). Tasks: ${JSON.stringify(summaries)}`;
+  const response = await askClaude([{ role: 'user', content: user }], system);
+  const match = response.match(/\[[\s\S]*?\]/);
+  if (!match) throw new Error('No array in response');
+  const ids = JSON.parse(match[0]);
+  if (!Array.isArray(ids)) throw new Error('Not an array');
+  return ids;
 }
 
 // ── Notification helpers ───────────────────────────────────────────────────────
@@ -1186,106 +1191,7 @@ function EditTaskModal({ task, onClose, onSave }) {
   );
 }
 
-// ── Settings Modal ────────────────────────────────────────────────────────────
-function SettingsModal({ settings, onSave, onClose, showToast }) {
-  const [homeAddr, setHomeAddr] = useState(settings.homeAddr || "");
-  const [workAddr, setWorkAddr] = useState(settings.workAddr || "");
-  const [local, setLocal]       = useState(settings);
-  const [geoLoading, setGeoLoading] = useState(null); // 'home' | 'work' | null
-
-  const geocodeAndSave = (type, address) => {
-    if (!address.trim()) { showToast("Please enter an address", null); return; }
-    if (!window.AndroidLocation) {
-      showToast("GPS geocoding is available on device", null);
-      return;
-    }
-    setGeoLoading(type);
-    try {
-      const result = window.AndroidLocation.geocodeAddress(address.trim());
-      const coords = JSON.parse(result);
-      if (coords.error) {
-        showToast("Address not found — try a more specific address", null);
-      } else {
-        const updated = {
-          ...local,
-          [type === 'home' ? 'homeAddr'   : 'workAddr']:   address.trim(),
-          [type === 'home' ? 'homeCoords' : 'workCoords']: { lat: coords.lat, lng: coords.lng },
-        };
-        setLocal(updated);
-        showToast(`✓ ${type === 'home' ? 'Home' : 'Work'} location saved`, null);
-      }
-    } catch { showToast("Geocoding error", null); }
-    setGeoLoading(null);
-  };
-
-  const handleBackdrop = (e) => { if (e.target === e.currentTarget) { onSave(local); onClose(); } };
-
-  return (
-    <div onMouseDown={handleBackdrop}
-      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)",
-        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
-      <div onMouseDown={e=>e.stopPropagation()}
-        style={{ background:"var(--card-bg)", borderRadius:18, padding:"22px 24px",
-          width:"100%", maxWidth:440, maxHeight:"90vh", overflowY:"auto",
-          boxShadow:"0 24px 70px rgba(0,0,0,0.5)", animation:"popIn .22s ease" }}>
-
-        <div style={{ display:"flex", alignItems:"center", marginBottom:18 }}>
-          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:20, fontWeight:800, color:"var(--text)", flex:1 }}>⚙️ Settings</h2>
-          <button onMouseDown={e=>{e.stopPropagation();onSave(local);onClose();}} style={{ ...iconBtn, borderRadius:"50%" }}>✕</button>
-        </div>
-
-        {/* Location section */}
-        <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", letterSpacing:.6, marginBottom:6 }}>📍 LOCATION SMART SORT</div>
-        <p style={{ fontSize:13, color:"var(--text-muted)", marginBottom:14, lineHeight:1.55 }}>
-          Save your home and work addresses so Smart Sort can prioritise tasks based on where you currently are.
-        </p>
-
-        {/* Home */}
-        <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", marginBottom:5 }}>🏠 HOME ADDRESS</div>
-          <div style={{ display:"flex", gap:7 }}>
-            <input placeholder="e.g. 10 Downing St, London"
-              value={homeAddr} onChange={e=>setHomeAddr(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&geocodeAndSave('home',homeAddr)}
-              style={{ ...inputStyle, flex:1, fontSize:13 }} />
-            <button onClick={()=>geocodeAndSave('home',homeAddr)} disabled={geoLoading==='home'}
-              style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:10,
-                padding:"0 16px", fontSize:13, fontWeight:700, cursor:"pointer",
-                fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>
-              {geoLoading==='home' ? "…" : "Save"}
-            </button>
-          </div>
-          {local.homeCoords && <div style={{ fontSize:11, color:"var(--fresh)", marginTop:4 }}>✓ Location set</div>}
-        </div>
-
-        {/* Work */}
-        <div style={{ marginBottom:22 }}>
-          <div style={{ fontSize:12, fontWeight:600, color:"var(--text-muted)", marginBottom:5 }}>💼 WORK ADDRESS</div>
-          <div style={{ display:"flex", gap:7 }}>
-            <input placeholder="e.g. 1 Infinite Loop, Cupertino"
-              value={workAddr} onChange={e=>setWorkAddr(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&geocodeAndSave('work',workAddr)}
-              style={{ ...inputStyle, flex:1, fontSize:13 }} />
-            <button onClick={()=>geocodeAndSave('work',workAddr)} disabled={geoLoading==='work'}
-              style={{ background:"var(--accent)", color:"#fff", border:"none", borderRadius:10,
-                padding:"0 16px", fontSize:13, fontWeight:700, cursor:"pointer",
-                fontFamily:"'DM Sans',sans-serif", flexShrink:0 }}>
-              {geoLoading==='work' ? "…" : "Save"}
-            </button>
-          </div>
-          {local.workCoords && <div style={{ fontSize:11, color:"var(--fresh)", marginTop:4 }}>✓ Location set</div>}
-        </div>
-
-        <div style={{ display:"flex", justifyContent:"flex-end" }}>
-          <button onMouseDown={e=>{e.stopPropagation();onSave(local);onClose();}}
-            style={{ background:"var(--accent)", color:"#fff", border:"none",
-              borderRadius:10, padding:"9px 22px", fontSize:13, fontWeight:700,
-              cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
-            Done ✓
-          </button>
-        </div>
-      </div>
-    </div>
+// ── Settings Modal (placeholder kept for future settings) ─────────────────────
   );
 }
 
@@ -1297,7 +1203,6 @@ function App() {
   const STORAGE_KEY   = "taskflow_tasks_v1";
   const DARK_KEY      = "taskflow_dark_v2";
   const TUTORIAL_KEY  = "taskflow_tutorial_done";
-  const SETTINGS_KEY  = "taskflow_settings_v1";
 
   function loadTasks() {
     try {
@@ -1348,18 +1253,10 @@ function App() {
   const [dark, setDark] = useState(() => loadDark());
   const [aiSugLoading, setAiSugLoading] = useState(false);
 
-  // Settings & Smart Sort
-  const [settings, setSettings] = useState(() => {
-    try {
-      const s = localStorage.getItem(SETTINGS_KEY);
-      return s ? JSON.parse(s) : { homeAddr:'', homeCoords:null, workAddr:'', workCoords:null };
-    } catch { return { homeAddr:'', homeCoords:null, workAddr:'', workCoords:null }; }
-  });
-  const [settingsOpen, setSettingsOpen]   = useState(false);
-  const [smartSortOn, setSmartSortOn]     = useState(false);
-  const [preSortOrder, setPreSortOrder]   = useState(null);
-  const [locationCtx, setLocationCtx]     = useState(null); // 'work' | 'home' | 'neutral'
-  const [locationLoading, setLocationLoading] = useState(false);
+  // Smart Sort
+  const [smartSortOn, setSmartSortOn]   = useState(false);
+  const [preSortOrder, setPreSortOrder] = useState(null);
+  const [aiSortLoading, setAiSortLoading] = useState(false);
 
   // Chat
   const [chatOpen, setChatOpen]       = useState(false);
@@ -1651,13 +1548,8 @@ For the recurrence field, detect any repetition in the speech:
     setChatLoading(false);
   };
 
-  // Persist settings
-  useEffect(() => {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
-  }, [settings]);
-
-  // ── Smart Sort (location-based toggle) ────────────────────────────────────
-  const toggleSmartSort = () => {
+  // ── Smart Sort (AI-powered toggle) ────────────────────────────────────────
+  const toggleSmartSort = async () => {
     if (smartSortOn) {
       // Turn OFF — restore original order
       if (preSortOrder) {
@@ -1672,41 +1564,31 @@ For the recurrence field, detect any repetition in the speech:
       }
       setSmartSortOn(false);
       setPreSortOrder(null);
-      setLocationCtx(null);
-      showToast("Smart Sort off — original order restored", null);
+      showToast("✦ AI Sort off — original order restored", null);
     } else {
-      // Turn ON — get location, determine context, sort
-      setLocationLoading(true);
+      // Turn ON — ask AI to prioritise tasks
       const currentActive = tasks.filter(t => !t.done);
+      if (currentActive.length === 0) { showToast("No active tasks to sort", null); return; }
+      setAiSortLoading(true);
       setPreSortOrder(currentActive.map(t => t.id));
-
-      let ctx = 'neutral';
       try {
-        if (window.AndroidLocation && settings.homeCoords && settings.workCoords) {
-          const locStr = window.AndroidLocation.getLocation();
-          const loc    = JSON.parse(locStr);
-          if (!loc.error) {
-            const homeDist = getDistanceKm(loc.lat, loc.lng, settings.homeCoords.lat, settings.homeCoords.lng);
-            const workDist = getDistanceKm(loc.lat, loc.lng, settings.workCoords.lat, settings.workCoords.lng);
-            ctx = workDist < homeDist ? 'work' : 'home';
-          }
-        } else if (!settings.homeCoords || !settings.workCoords) {
-          showToast("Tap ⚙️ Settings to set home & work addresses", null);
-        }
-      } catch {}
-
-      setLocationCtx(ctx);
-      setSmartSortOn(true);
-      setLocationLoading(false);
-
-      setTasks(prev => {
-        const done   = prev.filter(t => t.done);
-        const active = prev.filter(t => !t.done);
-        return [...locationSort(active, ctx), ...done];
-      });
-
-      const label = ctx === 'work' ? 'Work tasks first 💼' : ctx === 'home' ? 'Home & personal first 🏠' : 'Smart Sort on';
-      showToast(`📍 ${label}`, null);
+        const sortedIds = await getAiSortOrder(currentActive);
+        setTasks(prev => {
+          const done   = prev.filter(t => t.done);
+          const active = prev.filter(t => !t.done);
+          const sorted = [];
+          sortedIds.forEach(id => { const t = active.find(x => x.id === id); if (t) sorted.push(t); });
+          active.forEach(t => { if (!sorted.find(x => x.id === t.id)) sorted.push(t); });
+          return [...sorted, ...done];
+        });
+        setSmartSortOn(true);
+        showToast("✦ Tasks sorted by AI priority", null);
+      } catch {
+        setPreSortOrder(null);
+        showToast("AI Sort failed — please try again", null);
+      } finally {
+        setAiSortLoading(false);
+      }
     }
   };
 
@@ -1756,9 +1638,6 @@ For the recurrence field, detect any repetition in the speech:
           </div>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
             <div style={{ display:"flex", gap:6 }}>
-              <button onClick={()=>setSettingsOpen(true)}
-                style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
-                title="Settings">⚙️</button>
               <button onClick={()=>setShowTutorial(true)}
                 style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
                 title="Help / Tutorial">❓</button>
@@ -1808,14 +1687,14 @@ For the recurrence field, detect any repetition in the speech:
               <div style={{ display:"flex", gap:7, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
                 <input placeholder="Search tasks…" value={searchQ} onChange={e=>setSearchQ(e.target.value)}
                   style={{ flex:1, minWidth:120, background:"var(--input-bg)", border:"1px solid var(--border)", borderRadius:10, padding:"7px 11px", color:"var(--text)", fontSize:13, fontFamily:"'DM Sans',sans-serif", outline:"none" }} />
-                <button onClick={toggleSmartSort} disabled={locationLoading} style={{
+                <button onClick={toggleSmartSort} disabled={aiSortLoading} style={{
                   background: smartSortOn ? "var(--accent)" : "var(--accent)22",
                   color: smartSortOn ? "#fff" : "var(--accent)",
                   border:`1px solid ${smartSortOn ? "var(--accent)" : "var(--accent)44"}`,
                   borderRadius:8, padding:"6px 12px", fontSize:12, fontWeight:700,
-                  cursor:"pointer", fontFamily:"'DM Sans',sans-serif", transition:"all .2s",
+                  cursor: aiSortLoading ? "wait" : "pointer", fontFamily:"'DM Sans',sans-serif", transition:"all .2s",
                 }}>
-                  {locationLoading ? "📍 …" : smartSortOn ? "📍 Smart Sort ON" : "📍 Smart Sort"}
+                  {aiSortLoading ? "✦ Sorting…" : smartSortOn ? "✦ AI Sort ON" : "✦ AI Sort"}
                 </button>
               </div>
 
@@ -1824,23 +1703,15 @@ For the recurrence field, detect any repetition in the speech:
                 <span>⠿</span><span>Drag to reorder · 🎨 to color · ✦ to ask AI</span>
               </div>
 
-              {/* Smart Sort location context banner */}
+              {/* AI Smart Sort banner */}
               {smartSortOn && (
                 <div style={{ background:"var(--accent)12", border:"1px solid var(--accent)44", borderRadius:12,
                   padding:"10px 13px", marginBottom:12, animation:"fadeIn .3s ease",
                   display:"flex", alignItems:"center", gap:10 }}>
-                  <span style={{ fontSize:20 }}>
-                    {locationCtx==='work' ? '💼' : locationCtx==='home' ? '🏠' : '📍'}
-                  </span>
+                  <span style={{ fontSize:20 }}>✦</span>
                   <div>
-                    <div style={{ fontSize:12, fontWeight:700, color:"var(--accent)" }}>
-                      {locationCtx==='work' ? "You're at work" : locationCtx==='home' ? "You're at home" : "Smart Sort active"}
-                    </div>
-                    <div style={{ fontSize:11, color:"var(--text-muted)" }}>
-                      {locationCtx==='work' ? "Work tasks shown first"
-                        : locationCtx==='home' ? "Home & personal tasks shown first"
-                        : "Tap ⚙️ to set home & work addresses"}
-                    </div>
+                    <div style={{ fontSize:12, fontWeight:700, color:"var(--accent)" }}>AI Priority Sort active</div>
+                    <div style={{ fontSize:11, color:"var(--text-muted)" }}>Tasks ranked by urgency, due date & time of day</div>
                   </div>
                 </div>
               )}
@@ -2138,14 +2009,6 @@ For the recurrence field, detect any repetition in the speech:
         {/* Add Task Modal — rendered at top level, not inside any overflow:hidden parent */}
         {addOpen && <AddTaskModal onClose={()=>setAddOpen(false)} onAdd={addTask} />}
         {editTask && <EditTaskModal task={editTask} onClose={()=>setEditTask(null)} onSave={saveEditedTask} />}
-        {settingsOpen && (
-          <SettingsModal
-            settings={settings}
-            onSave={s => setSettings(s)}
-            onClose={() => setSettingsOpen(false)}
-            showToast={showToast}
-          />
-        )}
       </div>
     </>
   );

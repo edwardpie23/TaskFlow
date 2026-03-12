@@ -4,8 +4,25 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Purple star symbol -->
+
+    <!-- Bold checkmark — filled polygon, safe area 18-90 -->
+    <!-- Left arm outer: (24,58) → bottom tip outer: (44,78) -->
+    <!-- Right arm outer: (44,78) → top-right outer: (86,36) -->
+    <!-- Top-right inner: (80,30) → elbow inner: (44,70) → left end inner: (30,52) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,20 L58,46 L84,42 L62,58 L72,82 L54,64 L36,82 L46,58 L24,42 L50,46 Z"/>
+        android:pathData="M24,58 L44,78 L86,36 L80,30 L44,70 L30,52 Z"/>
+
+    <!-- Four-pointed sparkle top-right — brand accent -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.75"
+        android:pathData="M80,22 L82,18 L84,22 L88,24 L84,26 L82,30 L80,26 L76,24 Z"/>
+
+    <!-- Small dot bottom-left for visual balance -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.35"
+        android:pathData="M26,80 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
+
 </vector>

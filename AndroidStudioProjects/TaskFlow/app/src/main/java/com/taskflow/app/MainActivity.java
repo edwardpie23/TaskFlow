@@ -10,8 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.location.Location;
-import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -41,7 +39,6 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_AUDIO_PERMISSION        = 1;
-    private static final int REQUEST_LOCATION_PERMISSION     = 2;
     private static final int REQUEST_NOTIFICATION_PERMISSION = 3;
     private static final String NOTIF_CHANNEL_ID             = "taskflow_channel";
 
@@ -100,57 +97,6 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public String ping() { return "pong"; }
-    }
-
-    // ── Location bridge ────────────────────────────────────────────────────────
-    static class LocationBridge {
-        private final Context ctx;
-
-        LocationBridge(Context context) { this.ctx = context.getApplicationContext(); }
-
-        /** Returns JSON {lat, lng} or {error: "reason"} */
-        @JavascriptInterface
-        public String getLocation() {
-            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED
-                && ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
-                    != PackageManager.PERMISSION_GRANTED) {
-                return "{\"error\":\"permission_denied\"}";
-            }
-            try {
-                LocationManager lm = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
-                Location loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-                if (loc == null) loc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-                if (loc == null) loc = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
-                if (loc == null) return "{\"error\":\"no_location\"}";
-                return "{\"lat\":" + loc.getLatitude() + ",\"lng\":" + loc.getLongitude() + "}";
-            } catch (Exception e) {
-                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "error";
-                return "{\"error\":\"" + msg + "\"}";
-            }
-        }
-
-        /** Geocodes an address string to {lat, lng} or {error: "reason"} */
-        @JavascriptInterface
-        public String geocodeAddress(String address) {
-            if (address == null || address.trim().isEmpty()) return "{\"error\":\"empty\"}";
-            if (!android.location.Geocoder.isPresent()) return "{\"error\":\"geocoder_unavailable\"}";
-            try {
-                android.location.Geocoder geocoder =
-                    new android.location.Geocoder(ctx, java.util.Locale.getDefault());
-                @SuppressWarnings("deprecation")
-                java.util.List<android.location.Address> list =
-                    geocoder.getFromLocationName(address.trim(), 1);
-                if (list == null || list.isEmpty()) return "{\"error\":\"not_found\"}";
-                android.location.Address addr = list.get(0);
-                return "{\"lat\":" + addr.getLatitude() + ",\"lng\":" + addr.getLongitude() + "}";
-            } catch (java.io.IOException e) {
-                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "io_error";
-                return "{\"error\":\"" + msg + "\"}";
-            } catch (Exception e) {
-                return "{\"error\":\"unknown\"}";
-            }
-        }
     }
 
     // ── Notification bridge ────────────────────────────────────────────────────
@@ -229,16 +175,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // ── Request runtime permissions upfront ───────────────────────────
-        // Location
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                new String[]{
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                },
-                REQUEST_LOCATION_PERMISSION);
-        }
         // Notifications (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -277,7 +213,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Register all bridges
         webView.addJavascriptInterface(new ApiBridge(),                    "Android");
-        webView.addJavascriptInterface(new LocationBridge(this),     "AndroidLocation");
         webView.addJavascriptInterface(new NotificationBridge(this), "AndroidNotif");
 
         CookieManager cm = CookieManager.getInstance();
