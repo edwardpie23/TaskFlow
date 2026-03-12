@@ -952,13 +952,14 @@ Current time of day: ${timeOfDayLabel()}
 
 This may be a raw sentence, not a clean task title. Extract all task details.
 Reply with ONLY a JSON object, no explanation, no markdown:
-{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","reason":"one short sentence"}
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","notes":"a brief expansion of exactly what the user said — include key details like time, purpose, and context. Do NOT add suggestions, advice, or anything the user did not mention.","reason":"one short sentence"}
 
 Rules:
 - title: convert natural language to a short action title (e.g. "I want to walk the dog tonight" → "Walk the dog")
 - urgency: how time-sensitive does this sound?
 - preferredTime: infer from context clues like "tonight", "after work", "in the morning"
-- category: pick the most fitting from Work, Personal, Health, Finance, Home, Learning, Social, Other`;
+- category: pick the most fitting from Work, Personal, Health, Finance, Home, Learning, Social, Other
+- notes: only expand on what the user actually said (time, purpose, location, context). Do not add tips, reminders, or suggestions they didn't mention.`;
         const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
         const cleaned = raw.replace(/```json|```/g,"").trim();
         const start = cleaned.indexOf("{");
@@ -981,6 +982,10 @@ Rules:
           if (CATEGORIES.includes(parsed.category)) {
             setT(v=>({...v,category:parsed.category}));
             picked.category = true;
+          }
+          if (parsed.notes && parsed.notes.trim().length > 0) {
+            setT(v=>({...v,notes:parsed.notes.trim()}));
+            picked.notes = true;
           }
           setAiPicked(picked);
         }
@@ -1378,7 +1383,7 @@ function App() {
       try {
         const prompt = `Extract task details from this voice input: "${transcript}"
 Reply with ONLY a JSON object, no markdown:
-{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","recurrence":null}
+{"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","notes":"a brief expansion of exactly what the user said — include key details like time, purpose, and context. Do NOT add suggestions or anything the user did not mention. Empty string if nothing specific was said.","recurrence":null}
 
 For the recurrence field, detect any repetition in the speech:
 - null → no repetition mentioned
@@ -1400,7 +1405,7 @@ For the recurrence field, detect any repetition in the speech:
               preferredTime: ["morning","afternoon","evening","night","anytime"].includes(parsed.preferredTime) ? parsed.preferredTime : "anytime",
               category: CATEGORIES.includes(parsed.category) ? parsed.category : "Work",
               description: parsed.description || "",
-              notes: "", dueDate: "", recurrence: rec,
+              notes: parsed.notes || "", dueDate: "", recurrence: rec,
               id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null,
             }]);
             showToast(`🎤 Added: "${parsed.title}"${rec ? " · 🔁 recurring" : ""}`, null);
@@ -1746,7 +1751,7 @@ For the recurrence field, detect any repetition in the speech:
 
           {/* ── Chat Panel ── */}
           {chatOpen && (
-            <div className="chat-anim" style={{ width:315, borderLeft:"1px solid var(--border)", display:"flex", flexDirection:"column", background:"var(--chat-bg)", flexShrink:0 }}>
+            <div className="chat-anim" style={{ position:"fixed", right:0, top:0, bottom:0, width:"min(315px,100vw)", borderLeft:"1px solid var(--border)", display:"flex", flexDirection:"column", background:"var(--chat-bg)", zIndex:300, boxShadow:"-6px 0 28px rgba(0,0,0,0.25)" }}>
               <div style={{ padding:"11px 13px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:7 }}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, color:"var(--accent)" }}>✦ AI Assistant</div>
@@ -1807,8 +1812,11 @@ For the recurrence field, detect any repetition in the speech:
                 startVoiceTask();
               }, 600);
             }}
-            onPointerUp={() => { clearTimeout(longPressTimer.current); if (!longPressFired.current) setAddOpen(true); }}
-            onPointerLeave={() => clearTimeout(longPressTimer.current)}
+            onPointerUp={() => { clearTimeout(longPressTimer.current); }}
+            onPointerLeave={() => { clearTimeout(longPressTimer.current); }}
+            onPointerCancel={() => { clearTimeout(longPressTimer.current); }}
+            onClick={() => { if (!longPressFired.current) setAddOpen(true); }}
+            onContextMenu={e => e.preventDefault()}
             style={{
               background:"var(--header-bg)",
               color:"var(--accent)",

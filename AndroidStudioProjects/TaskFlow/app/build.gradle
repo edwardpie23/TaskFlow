@@ -30,7 +30,7 @@ android {
     }
 
     buildFeatures {
-        // viewBinding not needed for WebView-only activity
+        buildConfig true
     }
 }
 
