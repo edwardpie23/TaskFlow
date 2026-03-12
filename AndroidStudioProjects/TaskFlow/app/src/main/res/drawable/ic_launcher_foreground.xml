@@ -4,8 +4,42 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Purple star symbol -->
+
+    <!-- Flowing arrow / stream — represents "Flow" in TaskFlow -->
+    <!-- A curved swoosh from bottom-left up to top-right -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,20 L58,46 L84,42 L62,58 L72,82 L54,64 L36,82 L46,58 L24,42 L50,46 Z"/>
+        android:fillAlpha="0.2"
+        android:pathData="M20,78 Q30,62 42,56 Q54,50 66,44 Q78,38 88,26 L88,34 Q78,46 66,52 Q54,58 42,64 Q30,70 20,86 Z"/>
+
+    <!-- Task list lines — three horizontal bars representing tasks -->
+    <!-- Line 1 (top — longest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M28,36 L62,36 Q64,36 64,38 L64,40 Q64,42 62,42 L28,42 Q26,42 26,40 L26,38 Q26,36 28,36 Z"/>
+
+    <!-- Line 2 (middle) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M28,50 L56,50 Q58,50 58,52 L58,54 Q58,56 56,56 L28,56 Q26,56 26,54 L26,52 Q26,50 28,50 Z"/>
+
+    <!-- Line 3 (bottom — shortest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M28,64 L48,64 Q50,64 50,66 L50,68 Q50,70 48,70 L28,70 Q26,70 26,68 L26,66 Q26,64 28,64 Z"/>
+
+    <!-- Bright sparkle / accent star — top-right area -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M76,30 L78,24 L80,30 L86,32 L80,34 L78,40 L76,34 L70,32 Z"/>
+
+    <!-- Smaller sparkle — lower right -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.6"
+        android:pathData="M82,56 L83,53 L84,56 L87,57 L84,58 L83,61 L82,58 L79,57 Z"/>
+
 </vector>

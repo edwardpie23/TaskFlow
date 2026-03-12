@@ -1384,9 +1384,10 @@ function App() {
     setTasks(prev => prev.map(t => t.id===id ? updated : t));
   };
   const clearCompleted = () => {
-    const count = tasks.filter(t=>t.done).length;
+    const count = tasks.filter(t => t.done && !t.recurrence).length;
+    if (count === 0) { showToast("No completed non-recurring tasks to clear", null); return; }
     const snapshot = tasks;
-    setTasks(prev => prev.filter(t=>!t.done));
+    setTasks(prev => prev.filter(t => !t.done || t.recurrence));
     showToast(`Cleared ${count} completed task${count!==1?"s":""}`, () => setTasks(snapshot));
   };
 
