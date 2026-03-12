@@ -5,24 +5,41 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Bold checkmark — filled polygon, safe area 18-90 -->
-    <!-- Left arm outer: (24,58) → bottom tip outer: (44,78) -->
-    <!-- Right arm outer: (44,78) → top-right outer: (86,36) -->
-    <!-- Top-right inner: (80,30) → elbow inner: (44,70) → left end inner: (30,52) -->
+    <!-- Flowing arrow / stream — represents "Flow" in TaskFlow -->
+    <!-- A curved swoosh from bottom-left up to top-right -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M24,58 L44,78 L86,36 L80,30 L44,70 L30,52 Z"/>
+        android:fillAlpha="0.2"
+        android:pathData="M20,78 Q30,62 42,56 Q54,50 66,44 Q78,38 88,26 L88,34 Q78,46 66,52 Q54,58 42,64 Q30,70 20,86 Z"/>
 
-    <!-- Four-pointed sparkle top-right — brand accent -->
+    <!-- Task list lines — three horizontal bars representing tasks -->
+    <!-- Line 1 (top — longest) -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillAlpha="0.75"
-        android:pathData="M80,22 L82,18 L84,22 L88,24 L84,26 L82,30 L80,26 L76,24 Z"/>
+        android:fillAlpha="0.55"
+        android:pathData="M28,36 L62,36 Q64,36 64,38 L64,40 Q64,42 62,42 L28,42 Q26,42 26,40 L26,38 Q26,36 28,36 Z"/>
 
-    <!-- Small dot bottom-left for visual balance -->
+    <!-- Line 2 (middle) -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillAlpha="0.35"
-        android:pathData="M26,80 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
+        android:fillAlpha="0.55"
+        android:pathData="M28,50 L56,50 Q58,50 58,52 L58,54 Q58,56 56,56 L28,56 Q26,56 26,54 L26,52 Q26,50 28,50 Z"/>
+
+    <!-- Line 3 (bottom — shortest) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M28,64 L48,64 Q50,64 50,66 L50,68 Q50,70 48,70 L28,70 Q26,70 26,68 L26,66 Q26,64 28,64 Z"/>
+
+    <!-- Bright sparkle / accent star — top-right area -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M76,30 L78,24 L80,30 L86,32 L80,34 L78,40 L76,34 L70,32 Z"/>
+
+    <!-- Smaller sparkle — lower right -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.6"
+        android:pathData="M82,56 L83,53 L84,56 L87,57 L84,58 L83,61 L82,58 L79,57 Z"/>
 
 </vector>
