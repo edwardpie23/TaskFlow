@@ -1266,6 +1266,7 @@ function App() {
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceLoading, setVoiceLoading]     = useState(false);
   const recognitionRef  = useRef(null);
+  const voiceCancelRef  = useRef(false);
   const longPressTimer  = useRef(null);
   const longPressFired  = useRef(false);
 
@@ -1468,20 +1469,36 @@ function App() {
     setChatHistory([{ role:"assistant", content:`I can see all ${tasks.length} tasks. Ask me about priority, time estimates, or how to tackle anything on your list!` }]);
     setChatOpen(true);
   };
-  // ── Voice task creation ─────────────────────────────────────────────────────
+  // ── Voice task creation (hold-to-record) ───────────────────────────────────
   const startVoiceTask = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { showToast("Voice input not supported on this browser", null); return; }
     const recognition = new SR();
     recognitionRef.current = recognition;
+    voiceCancelRef.current = false;
     recognition.lang = "en-US";
+    recognition.continuous = true;       // keep recording until stop() is called
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
+
+    let accumulated = "";
+
     setVoiceRecording(true);
     recognition.start();
-    recognition.onresult = async (event) => {
-      const transcript = event.results[0][0].transcript;
+
+    recognition.onresult = (event) => {
+      // Accumulate every final segment as the user speaks
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) accumulated += event.results[i][0].transcript + " ";
+      }
+    };
+
+    recognition.onend = async () => {
+      recognitionRef.current = null;
       setVoiceRecording(false);
+      if (voiceCancelRef.current) return; // user tapped Cancel
+      const transcript = accumulated.trim();
+      if (!transcript) { showToast("No speech detected — try again", null); return; }
       setVoiceLoading(true);
       try {
         const prompt = `Extract task details from this voice input: "${transcript}"
@@ -1516,18 +1533,19 @@ For the recurrence field, detect any repetition in the speech:
         }
       } catch(e) { showToast("Could not process voice input", null); }
       setVoiceLoading(false);
-      recognitionRef.current = null;
     };
+
     recognition.onerror = (ev) => {
       setVoiceRecording(false); setVoiceLoading(false);
       recognitionRef.current = null;
-      if (ev.error !== "aborted") showToast("Voice error: " + ev.error, null);
+      if (ev.error !== "aborted" && ev.error !== "no-speech") showToast("Voice error: " + ev.error, null);
     };
-    recognition.onend = () => { recognitionRef.current = null; };
   };
-  const stopVoice = () => {
-    if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
-    setVoiceRecording(false);
+
+  const stopVoice = (cancel = false) => {
+    voiceCancelRef.current = cancel;
+    if (recognitionRef.current) { recognitionRef.current.stop(); }
+    else { setVoiceRecording(false); }
   };
 
   const sendChat = async () => {
@@ -1931,9 +1949,9 @@ For the recurrence field, detect any repetition in the speech:
                 startVoiceTask();
               }, 600);
             }}
-            onPointerUp={() => { clearTimeout(longPressTimer.current); }}
-            onPointerLeave={() => { clearTimeout(longPressTimer.current); }}
-            onPointerCancel={() => { clearTimeout(longPressTimer.current); }}
+            onPointerUp={() => { clearTimeout(longPressTimer.current); if (voiceRecording) stopVoice(); }}
+            onPointerLeave={() => { clearTimeout(longPressTimer.current); if (voiceRecording) stopVoice(); }}
+            onPointerCancel={() => { clearTimeout(longPressTimer.current); if (voiceRecording) stopVoice(); }}
             onClick={() => { if (!longPressFired.current) setAddOpen(true); }}
             onContextMenu={e => e.preventDefault()}
             style={{
@@ -1967,7 +1985,7 @@ For the recurrence field, detect any repetition in the speech:
               {voiceLoading ? "Creating task…" : "Listening…"}
             </div>
             <div style={{ color:"rgba(255,255,255,0.55)", fontSize:14, textAlign:"center", maxWidth:240 }}>
-              {voiceLoading ? "AI is analysing your voice" : "Speak your task, then release the button"}
+              {voiceLoading ? "AI is analysing your voice" : "Keep holding & speak — release when done"}
             </div>
             {voiceRecording && (
               <div style={{ display:"flex", gap:4, alignItems:"flex-end", height:32, marginTop:4 }}>
@@ -1978,7 +1996,7 @@ For the recurrence field, detect any repetition in the speech:
               </div>
             )}
             {voiceRecording && (
-              <button onClick={stopVoice} style={{ marginTop:10,
+              <button onClick={() => stopVoice(true)} style={{ marginTop:10,
                 background:"rgba(255,255,255,0.12)", color:"#fff",
                 border:"1px solid rgba(255,255,255,0.25)", borderRadius:12,
                 padding:"10px 28px", fontSize:14, fontWeight:600, cursor:"pointer",
