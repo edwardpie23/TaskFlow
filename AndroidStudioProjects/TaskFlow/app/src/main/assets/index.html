@@ -1265,8 +1265,9 @@ function App() {
   // Voice
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceLoading, setVoiceLoading]     = useState(false);
-  const recognitionRef  = useRef(null);
-  const voiceCancelRef  = useRef(false);
+  const mediaRecorderRef = useRef(null);
+  const voiceChunksRef   = useRef([]);
+  const voiceCancelRef   = useRef(false);
   const longPressTimer  = useRef(null);
   const longPressFired  = useRef(false);
 
@@ -1469,39 +1470,12 @@ function App() {
     setChatHistory([{ role:"assistant", content:`I can see all ${tasks.length} tasks. Ask me about priority, time estimates, or how to tackle anything on your list!` }]);
     setChatOpen(true);
   };
-  // ── Voice task creation (hold-to-record) ───────────────────────────────────
-  const startVoiceTask = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { showToast("Voice input not supported on this browser", null); return; }
-    const recognition = new SR();
-    recognitionRef.current = recognition;
-    voiceCancelRef.current = false;
-    recognition.lang = "en-US";
-    recognition.continuous = true;       // keep recording until stop() is called
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    let accumulated = "";
-
-    setVoiceRecording(true);
-    recognition.start();
-
-    recognition.onresult = (event) => {
-      // Accumulate every final segment as the user speaks
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) accumulated += event.results[i][0].transcript + " ";
-      }
-    };
-
-    recognition.onend = async () => {
-      recognitionRef.current = null;
-      setVoiceRecording(false);
-      if (voiceCancelRef.current) return; // user tapped Cancel
-      const transcript = accumulated.trim();
-      if (!transcript) { showToast("No speech detected — try again", null); return; }
-      setVoiceLoading(true);
-      try {
-        const prompt = `Extract task details from this voice input: "${transcript}"
+  // ── Voice task creation (MediaRecorder hold-to-record → Groq Whisper) ───────
+  const processVoiceTranscript = async (transcript) => {
+    if (!transcript) { showToast("No speech detected — try again", null); return; }
+    setVoiceLoading(true);
+    try {
+      const prompt = `Extract task details from this voice input: "${transcript}"
 Reply with ONLY a JSON object, no markdown:
 {"title":"concise 2-5 word task name","urgency":"low|medium|high|critical","preferredTime":"morning|afternoon|evening|night|anytime","category":"Work|Personal|Health|Finance|Home|Learning|Social|Other","description":"short description or empty string","notes":"a brief expansion of exactly what the user said — include key details like time, purpose, and context. Do NOT add suggestions or anything the user did not mention. Empty string if nothing specific was said.","recurrence":null}
 
@@ -1511,41 +1485,108 @@ For the recurrence field, detect any repetition in the speech:
 - {"type":"weekly","days":[N,...]} → "every Monday" (1), "every Mon and Wed" ([1,3]), Sun=0,Mon=1,Tue=2,Wed=3,Thu=4,Fri=5,Sat=6
 - {"type":"monthly","day":N} → "every 15th", "monthly on the 3rd" etc.
 - {"type":"interval","days":N} → "every 3 days", "every 2 weeks" (14), "every other day" (2)`;
-        const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
-        const cleaned = raw.replace(/```json|```/g,"").trim();
-        const s = cleaned.indexOf("{"); const e2 = cleaned.lastIndexOf("}");
-        if (s !== -1 && e2 !== -1) {
-          const parsed = JSON.parse(cleaned.slice(s, e2+1));
-          if (parsed.title) {
-            const validRecTypes = ["daily","weekly","monthly","interval"];
-            const rec = (parsed.recurrence && validRecTypes.includes(parsed.recurrence.type)) ? parsed.recurrence : null;
-            setTasks(prev => [...prev, {
-              title: parsed.title,
-              urgency: ["low","medium","high","critical"].includes(parsed.urgency) ? parsed.urgency : "medium",
-              preferredTime: ["morning","afternoon","evening","night","anytime"].includes(parsed.preferredTime) ? parsed.preferredTime : "anytime",
-              category: CATEGORIES.includes(parsed.category) ? parsed.category : "Work",
-              description: parsed.description || "",
-              notes: parsed.notes || "", dueDate: "", recurrence: rec,
-              id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null,
-            }]);
-            showToast(`🎤 Added: "${parsed.title}"${rec ? " · 🔁 recurring" : ""}`, null);
-          }
+      const raw = await askClaude([{role:"user",content:prompt}], "You are a task extraction assistant. Always reply with valid JSON only.");
+      const cleaned = raw.replace(/```json|```/g,"").trim();
+      const s = cleaned.indexOf("{"); const e2 = cleaned.lastIndexOf("}");
+      if (s !== -1 && e2 !== -1) {
+        const parsed = JSON.parse(cleaned.slice(s, e2+1));
+        if (parsed.title) {
+          const validRecTypes = ["daily","weekly","monthly","interval"];
+          const rec = (parsed.recurrence && validRecTypes.includes(parsed.recurrence.type)) ? parsed.recurrence : null;
+          setTasks(prev => [...prev, {
+            title: parsed.title,
+            urgency: ["low","medium","high","critical"].includes(parsed.urgency) ? parsed.urgency : "medium",
+            preferredTime: ["morning","afternoon","evening","night","anytime"].includes(parsed.preferredTime) ? parsed.preferredTime : "anytime",
+            category: CATEGORIES.includes(parsed.category) ? parsed.category : "Work",
+            description: parsed.description || "",
+            notes: parsed.notes || "", dueDate: "", recurrence: rec,
+            id:uid(), done:false, createdAt:Date.now(), lastUpdated:Date.now(), color:null,
+          }]);
+          showToast(`🎤 Added: "${parsed.title}"${rec ? " · 🔁 recurring" : ""}`, null);
         }
-      } catch(e) { showToast("Could not process voice input", null); }
-      setVoiceLoading(false);
-    };
+      }
+    } catch(e) { showToast("Could not process voice input", null); }
+    setVoiceLoading(false);
+  };
 
-    recognition.onerror = (ev) => {
-      setVoiceRecording(false); setVoiceLoading(false);
-      recognitionRef.current = null;
-      if (ev.error !== "aborted" && ev.error !== "no-speech") showToast("Voice error: " + ev.error, null);
-    };
+  const startVoiceTask = async () => {
+    voiceCancelRef.current = false;
+    voiceChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Pick a MIME type Groq Whisper accepts and the device supports
+      const mimeType = ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg","audio/mp4"]
+        .find(t => MediaRecorder.isTypeSupported(t)) || "";
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) voiceChunksRef.current.push(e.data); };
+
+      recorder.onstop = async () => {
+        // Stop all tracks so mic indicator goes away
+        stream.getTracks().forEach(t => t.stop());
+        mediaRecorderRef.current = null;
+        setVoiceRecording(false);
+        if (voiceCancelRef.current) return;
+
+        const blob = new Blob(voiceChunksRef.current, { type: mimeType || "audio/webm" });
+        if (blob.size < 1000) { showToast("Recording too short — hold longer", null); return; }
+
+        // Convert blob → base64 and send to Groq Whisper via Android bridge
+        const base64 = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result.split(",")[1]);
+          fr.onerror = rej;
+          fr.readAsDataURL(blob);
+        });
+
+        setVoiceLoading(true);
+        let transcript = "";
+        try {
+          if (window.Android && window.Android.groqWhisper) {
+            const raw = window.Android.groqWhisper(GROQ_API_KEY, base64, mimeType || "audio/webm");
+            const parsed = JSON.parse(raw);
+            if (parsed.status === 200 && parsed.body && parsed.body.text) {
+              transcript = parsed.body.text.trim();
+            } else {
+              const errMsg = parsed.body?.error?.message || "Whisper error";
+              showToast("Transcription failed: " + errMsg, null);
+              setVoiceLoading(false);
+              return;
+            }
+          } else {
+            // Fallback: fetch directly (browser/dev environment)
+            const fd = new FormData();
+            fd.append("file", blob, "audio" + (mimeType.includes("ogg") ? ".ogg" : ".webm"));
+            fd.append("model", "whisper-large-v3-turbo");
+            const resp = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + GROQ_API_KEY },
+              body: fd,
+            });
+            const data = await resp.json();
+            if (data.text) transcript = data.text.trim();
+            else { showToast("Transcription failed", null); setVoiceLoading(false); return; }
+          }
+        } catch(e) { showToast("Transcription error: " + (e.message||e), null); setVoiceLoading(false); return; }
+
+        await processVoiceTranscript(transcript);
+      };
+
+      recorder.start();
+      setVoiceRecording(true);
+    } catch(e) {
+      showToast("Microphone access denied — check permissions", null);
+    }
   };
 
   const stopVoice = (cancel = false) => {
     voiceCancelRef.current = cancel;
-    if (recognitionRef.current) { recognitionRef.current.stop(); }
-    else { setVoiceRecording(false); }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    } else {
+      setVoiceRecording(false);
+    }
   };
 
   const sendChat = async () => {

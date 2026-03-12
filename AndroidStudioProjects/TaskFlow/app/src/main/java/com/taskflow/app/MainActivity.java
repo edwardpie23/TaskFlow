@@ -95,6 +95,77 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        /**
+         * Send base64-encoded audio to Groq Whisper for transcription.
+         * audioBase64 — raw audio bytes encoded as Base64 (no data-URI prefix).
+         * mimeType    — e.g. "audio/webm" or "audio/ogg".
+         * Returns JSON {"status":200,"text":"..."} or {"status":0,"error":"..."}.
+         */
+        @JavascriptInterface
+        public String groqWhisper(String apiKey, String audioBase64, String mimeType) {
+            String cleanKey = apiKey == null ? "" : apiKey.trim();
+            HttpURLConnection conn = null;
+            try {
+                byte[] audioBytes = android.util.Base64.decode(audioBase64, android.util.Base64.DEFAULT);
+                String boundary = "----TFBoundary" + System.currentTimeMillis();
+
+                URL url = new URL("https://api.groq.com/openai/v1/audio/transcriptions");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setDoInput(true);
+                conn.setConnectTimeout(20000);
+                conn.setReadTimeout(40000);
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Authorization", "Bearer " + cleanKey);
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+                OutputStream os = conn.getOutputStream();
+                String ext = mimeType.contains("ogg") ? ".ogg" : mimeType.contains("mp4") ? ".mp4" : ".webm";
+
+                // -- model field
+                String modelPart = "--" + boundary + "\r\n"
+                    + "Content-Disposition: form-data; name=\"model\"\r\n\r\n"
+                    + "whisper-large-v3-turbo\r\n";
+                os.write(modelPart.getBytes(StandardCharsets.UTF_8));
+
+                // -- file field
+                String filePart = "--" + boundary + "\r\n"
+                    + "Content-Disposition: form-data; name=\"file\"; filename=\"audio" + ext + "\"\r\n"
+                    + "Content-Type: " + mimeType + "\r\n\r\n";
+                os.write(filePart.getBytes(StandardCharsets.UTF_8));
+                os.write(audioBytes);
+                os.write("\r\n".getBytes(StandardCharsets.UTF_8));
+
+                // -- close
+                String closing = "--" + boundary + "--\r\n";
+                os.write(closing.getBytes(StandardCharsets.UTF_8));
+                os.flush(); os.close();
+
+                int status = conn.getResponseCode();
+                java.io.InputStream stream;
+                try { stream = conn.getInputStream(); }
+                catch (Exception e) { stream = conn.getErrorStream(); }
+
+                BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+
+                return "{\"status\":" + status + ",\"body\":" + sb.toString() + "}";
+
+            } catch (Exception e) {
+                String msg = e.getMessage() != null
+                    ? e.getMessage().replace("\\", "\\\\").replace("\"", "'")
+                    : "unknown error";
+                return "{\"status\":0,\"body\":{\"error\":{\"message\":\"Whisper exception: " + msg + "\"}}}";
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+
         @JavascriptInterface
         public String ping() { return "pong"; }
     }
