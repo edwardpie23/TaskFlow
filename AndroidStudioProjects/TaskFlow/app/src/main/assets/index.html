@@ -1509,84 +1509,43 @@ For the recurrence field, detect any repetition in the speech:
     setVoiceLoading(false);
   };
 
-  const startVoiceTask = async () => {
+  const startVoiceTask = () => {
     voiceCancelRef.current = false;
-    voiceChunksRef.current = [];
+    if (!window.AndroidRecorder) { showToast("Voice recording not available", null); return; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Pick a MIME type Groq Whisper accepts and the device supports
-      const mimeType = ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg","audio/mp4"]
-        .find(t => MediaRecorder.isTypeSupported(t)) || "";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) voiceChunksRef.current.push(e.data); };
-
-      recorder.onstop = async () => {
-        // Stop all tracks so mic indicator goes away
-        stream.getTracks().forEach(t => t.stop());
-        mediaRecorderRef.current = null;
-        setVoiceRecording(false);
-        if (voiceCancelRef.current) return;
-
-        const blob = new Blob(voiceChunksRef.current, { type: mimeType || "audio/webm" });
-        if (blob.size < 1000) { showToast("Recording too short — hold longer", null); return; }
-
-        // Convert blob → base64 and send to Groq Whisper via Android bridge
-        const base64 = await new Promise((res, rej) => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result.split(",")[1]);
-          fr.onerror = rej;
-          fr.readAsDataURL(blob);
-        });
-
-        setVoiceLoading(true);
-        let transcript = "";
-        try {
-          if (window.Android && window.Android.groqWhisper) {
-            const raw = window.Android.groqWhisper(GROQ_API_KEY, base64, mimeType || "audio/webm");
-            const parsed = JSON.parse(raw);
-            if (parsed.status === 200 && parsed.body && parsed.body.text) {
-              transcript = parsed.body.text.trim();
-            } else {
-              const errMsg = parsed.body?.error?.message || "Whisper error";
-              showToast("Transcription failed: " + errMsg, null);
-              setVoiceLoading(false);
-              return;
-            }
-          } else {
-            // Fallback: fetch directly (browser/dev environment)
-            const fd = new FormData();
-            fd.append("file", blob, "audio" + (mimeType.includes("ogg") ? ".ogg" : ".webm"));
-            fd.append("model", "whisper-large-v3-turbo");
-            const resp = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-              method: "POST",
-              headers: { "Authorization": "Bearer " + GROQ_API_KEY },
-              body: fd,
-            });
-            const data = await resp.json();
-            if (data.text) transcript = data.text.trim();
-            else { showToast("Transcription failed", null); setVoiceLoading(false); return; }
-          }
-        } catch(e) { showToast("Transcription error: " + (e.message||e), null); setVoiceLoading(false); return; }
-
-        await processVoiceTranscript(transcript);
-      };
-
-      recorder.start();
+      const r = JSON.parse(window.AndroidRecorder.start());
+      if (r.error) { showToast("Mic error: " + r.error, null); return; }
       setVoiceRecording(true);
-    } catch(e) {
-      showToast("Microphone access denied — check permissions", null);
-    }
+    } catch(e) { showToast("Could not start recording", null); }
   };
 
   const stopVoice = (cancel = false) => {
     voiceCancelRef.current = cancel;
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    } else {
+    if (!window.AndroidRecorder) { setVoiceRecording(false); return; }
+    if (cancel) {
+      window.AndroidRecorder.cancel();
       setVoiceRecording(false);
+      return;
     }
+    setVoiceRecording(false);
+    setVoiceLoading(true);
+    // Defer 50ms so React renders the loading spinner before the synchronous Java call blocks JS
+    setTimeout(() => {
+      try {
+        const raw = window.AndroidRecorder.stopAndTranscribe(GROQ_API_KEY);
+        const result = JSON.parse(raw);
+        if (result.text && result.text.trim()) {
+          processVoiceTranscript(result.text.trim());
+        } else {
+          const msg = result.error === "recording_too_short" ? "Hold longer to record" : ("Transcription failed: " + (result.error || "unknown"));
+          showToast(msg, null);
+          setVoiceLoading(false);
+        }
+      } catch(e) {
+        showToast("Voice error: " + (e.message || e), null);
+        setVoiceLoading(false);
+      }
+    }, 50);
   };
 
   const sendChat = async () => {

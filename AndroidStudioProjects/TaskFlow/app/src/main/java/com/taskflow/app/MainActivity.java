@@ -170,6 +170,148 @@ public class MainActivity extends AppCompatActivity {
         public String ping() { return "pong"; }
     }
 
+    // ── Native recorder bridge ────────────────────────────────────────────────
+    // Records audio using Android MediaRecorder (bypasses WebView mic permission
+    // issues) and transcribes via Groq Whisper, returning the transcript to JS.
+    static class RecorderBridge {
+        private final Context ctx;
+        private android.media.MediaRecorder recorder = null;
+        private java.io.File audioFile = null;
+
+        RecorderBridge(Context context) { this.ctx = context.getApplicationContext(); }
+
+        @JavascriptInterface
+        public String start() {
+            try {
+                cleanup();
+                audioFile = java.io.File.createTempFile("tf_voice_", ".m4a", ctx.getCacheDir());
+                android.media.MediaRecorder mr;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    mr = new android.media.MediaRecorder(ctx);
+                } else {
+                    mr = new android.media.MediaRecorder();
+                }
+                mr.setAudioSource(android.media.MediaRecorder.AudioSource.MIC);
+                mr.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4);
+                mr.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC);
+                mr.setAudioSamplingRate(16000);
+                mr.setAudioEncodingBitRate(48000);
+                mr.setOutputFile(audioFile.getAbsolutePath());
+                mr.prepare();
+                mr.start();
+                recorder = mr;
+                return "{\"ok\":true}";
+            } catch (Exception e) {
+                cleanup();
+                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "error";
+                return "{\"error\":\"" + msg + "\"}";
+            }
+        }
+
+        /** Stop recording and transcribe via Groq Whisper. Returns {"text":"..."} or {"error":"..."}. */
+        @JavascriptInterface
+        public String stopAndTranscribe(String apiKey) {
+            // Stop and release the recorder
+            if (recorder != null) {
+                try { recorder.stop(); } catch (Exception ignored) {}
+                try { recorder.release(); } catch (Exception ignored) {}
+                recorder = null;
+            }
+            java.io.File file = audioFile;
+            audioFile = null;
+            if (file == null || !file.exists() || file.length() < 500) {
+                if (file != null) file.delete();
+                return "{\"error\":\"recording_too_short\"}";
+            }
+
+            // Read audio file into bytes
+            byte[] audioBytes;
+            try {
+                java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                audioBytes = new byte[(int) file.length()];
+                int read = 0;
+                while (read < audioBytes.length) {
+                    int n = fis.read(audioBytes, read, audioBytes.length - read);
+                    if (n < 0) break;
+                    read += n;
+                }
+                fis.close();
+            } catch (Exception e) {
+                file.delete();
+                return "{\"error\":\"read_failed\"}";
+            } finally {
+                file.delete();
+            }
+
+            // Send to Groq Whisper as multipart/form-data
+            String boundary = "----TFBoundary" + System.currentTimeMillis();
+            HttpURLConnection conn = null;
+            try {
+                java.net.URL url = new java.net.URL("https://api.groq.com/openai/v1/audio/transcriptions");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true); conn.setDoInput(true);
+                conn.setConnectTimeout(20000); conn.setReadTimeout(60000);
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Authorization", "Bearer " + (apiKey == null ? "" : apiKey.trim()));
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+                OutputStream os = conn.getOutputStream();
+                // model field
+                os.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n").getBytes(StandardCharsets.UTF_8));
+                // file field
+                os.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                os.write(audioBytes);
+                os.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+                os.flush(); os.close();
+
+                int status = conn.getResponseCode();
+                java.io.InputStream stream;
+                try { stream = conn.getInputStream(); } catch (Exception e) { stream = conn.getErrorStream(); }
+                BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+
+                if (status == 200) {
+                    // Extract "text" field from JSON response
+                    String body = sb.toString();
+                    int ti = body.indexOf("\"text\"");
+                    if (ti >= 0) {
+                        int q1 = body.indexOf("\"", ti + 6);
+                        int q2 = body.indexOf("\"", q1 + 1);
+                        if (q1 >= 0 && q2 > q1) {
+                            String text = body.substring(q1 + 1, q2)
+                                .replace("\\n","\\n").replace("\\\"","\"");
+                            return "{\"text\":\"" + text.replace("\"","\\\"") + "\"}";
+                        }
+                    }
+                    return "{\"error\":\"no_text_in_response\",\"body\":" + body + "}";
+                } else {
+                    return "{\"error\":\"whisper_" + status + "\",\"body\":" + sb.toString() + "}";
+                }
+            } catch (Exception e) {
+                String msg = e.getMessage() != null ? e.getMessage().replace("\"","'") : "error";
+                return "{\"error\":\"" + msg + "\"}";
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+
+        @JavascriptInterface
+        public void cancel() { cleanup(); }
+
+        private void cleanup() {
+            if (recorder != null) {
+                try { recorder.stop(); } catch (Exception ignored) {}
+                try { recorder.release(); } catch (Exception ignored) {}
+                recorder = null;
+            }
+            if (audioFile != null) { audioFile.delete(); audioFile = null; }
+        }
+    }
+
     // ── Notification bridge ────────────────────────────────────────────────────
     static class NotificationBridge {
         private final Context ctx;
@@ -246,6 +388,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // ── Request runtime permissions upfront ───────────────────────────
+        // Microphone (for voice-to-task)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.RECORD_AUDIO},
+                REQUEST_AUDIO_PERMISSION);
+        }
         // Notifications (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -284,6 +433,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Register all bridges
         webView.addJavascriptInterface(new ApiBridge(),                    "Android");
+        webView.addJavascriptInterface(new RecorderBridge(this),    "AndroidRecorder");
         webView.addJavascriptInterface(new NotificationBridge(this), "AndroidNotif");
 
         CookieManager cm = CookieManager.getInstance();
