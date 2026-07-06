@@ -238,18 +238,28 @@ function cancelTaskNotification(taskId) {
 }
 
 // ── AI ────────────────────────────────────────────────────────────────────────
-// ── Groq API key — supplied by the Android layer at build time ──────────────
-// On Android the key is baked into the APK via BuildConfig (from local.properties)
-// and read through the native bridge, so it never lives in this committed file.
-// For browser/PC testing you can temporarily paste a key into BROWSER_TEST_KEY.
-const BROWSER_TEST_KEY = "";
-const GROQ_API_KEY = (window.Android && window.Android.getApiKey)
-  ? (window.Android.getApiKey() || "").trim()
-  : BROWSER_TEST_KEY.trim();
+// ── Groq API key — entered by YOU inside the app, stored only on this device ──
+// The key lives exclusively in this phone's localStorage (key below). It is never
+// hardcoded in source, never committed to git, and never baked into the APK.
+// Tap the ⚙️ button in the header to paste your free key from console.groq.com.
+const GROQ_KEY_STORAGE = "taskflow_groq_key";
+function getGroqKey() {
+  try { return (localStorage.getItem(GROQ_KEY_STORAGE) || "").trim(); }
+  catch (e) { return ""; }
+}
+function saveGroqKey(k) {
+  try { localStorage.setItem(GROQ_KEY_STORAGE, (k || "").trim()); }
+  catch (e) {}
+}
+function clearGroqKey() {
+  try { localStorage.removeItem(GROQ_KEY_STORAGE); }
+  catch (e) {}
+}
 
 async function askClaude(messages, system) {
-  if (!GROQ_API_KEY || GROQ_API_KEY === "YOUR_GROQ_KEY_HERE") {
-    return "⚠️ No API key configured. Add GROQ_API_KEY=your_key to local.properties and rebuild the app (get a free key at console.groq.com).";
+  const GROQ_API_KEY = getGroqKey();
+  if (!GROQ_API_KEY) {
+    return "⚠️ No API key set. Tap the ⚙️ button (top-right) and paste your free Groq key from console.groq.com — it stays on your phone only.";
   }
 
   const systemMsg = {
@@ -1197,6 +1207,112 @@ function EditTaskModal({ task, onClose, onSave }) {
   );
 }
 
+// ── Settings Modal (API key entry — stored only on this device) ───────────────
+function SettingsModal({ initialKey, onClose, onSave, onClear }) {
+  const [key, setKey] = useState(initialKey || "");
+  const [reveal, setReveal] = useState(false);
+  const [testState, setTestState] = useState(null); // null | "testing" | "ok" | "fail"
+  const [testMsg, setTestMsg] = useState("");
+  const handleBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+
+  const doSave = () => { onSave(key.trim()); onClose(); };
+  const doClear = () => { setKey(""); onClear(); setTestState(null); setTestMsg(""); };
+
+  const doTest = async () => {
+    const k = key.trim();
+    if (!k) { setTestState("fail"); setTestMsg("Enter a key first."); return; }
+    // Persist before testing so askClaude() reads the current value
+    saveGroqKey(k);
+    setTestState("testing"); setTestMsg("");
+    try {
+      const reply = await askClaude([{ role: "user", content: "Reply with just the word OK." }], "You are a connection test. Reply with exactly: OK");
+      if (reply && !reply.startsWith("❌") && !reply.startsWith("⚠️")) {
+        setTestState("ok"); setTestMsg("Connected! Your key works.");
+      } else {
+        setTestState("fail"); setTestMsg(reply || "Test failed.");
+      }
+    } catch (e) {
+      setTestState("fail"); setTestMsg("Test failed: " + (e.message || e));
+    }
+  };
+
+  const testColor = testState === "ok" ? "#2ecc71" : testState === "fail" ? "#e74c3c" : "var(--text-muted)";
+
+  return (
+    <div onMouseDown={handleBackdrop}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{ background:"var(--card-bg)", borderRadius:18, padding:"22px 24px",
+          width:"100%", maxWidth:440, maxHeight:"90vh", overflowY:"auto",
+          boxShadow:"0 24px 70px rgba(0,0,0,0.5)", animation:"popIn .22s ease" }}>
+        <div style={{ display:"flex", alignItems:"center", marginBottom:16 }}>
+          <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, color:"var(--text)", flex:1 }}>⚙️ AI Settings</h2>
+          <button onMouseDown={e=>{e.stopPropagation();onClose();}} style={{ ...iconBtn, borderRadius:"50%" }}>✕</button>
+        </div>
+
+        <p style={{ fontSize:13.5, lineHeight:1.5, color:"var(--text-muted)", marginBottom:14 }}>
+          Paste your <b style={{color:"var(--text)"}}>Groq API key</b> to power the AI features (task refining,
+          chat, and voice). Get a free key at{" "}
+          <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer"
+            style={{ color:"var(--accent)", fontWeight:700 }}>console.groq.com</a>.
+        </p>
+
+        <div style={{ position:"relative", marginBottom:8 }}>
+          <input
+            autoFocus
+            type={reveal ? "text" : "password"}
+            placeholder="gsk_…"
+            value={key}
+            onChange={e=>{ setKey(e.target.value); setTestState(null); setTestMsg(""); }}
+            onKeyDown={e=>e.key==="Enter"&&doSave()}
+            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            style={{ ...inputStyle, fontSize:14, paddingRight:52, fontFamily:"monospace" }}
+          />
+          <button onMouseDown={e=>{e.stopPropagation();setReveal(v=>!v);}}
+            title={reveal ? "Hide" : "Show"}
+            style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)",
+              background:"none", border:"none", cursor:"pointer", fontSize:16, padding:4, color:"var(--text-muted)" }}>
+            {reveal ? "🙈" : "👁️"}
+          </button>
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+          <span style={{ fontSize:12, color:"var(--text-muted)" }}>🔒 Stored only on this phone — never uploaded or shared.</span>
+        </div>
+
+        {testMsg && (
+          <div style={{ fontSize:12.5, color:testColor, marginBottom:14, padding:"8px 11px",
+            background:"var(--btn-bg)", borderRadius:8, borderLeft:"3px solid "+testColor, wordBreak:"break-word" }}>
+            {testState==="testing" ? "Testing…" : testMsg}
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:9, justifyContent:"space-between", alignItems:"center" }}>
+          <button onMouseDown={e=>{e.stopPropagation();doClear();}}
+            style={{ background:"none", color:"var(--text-muted)", border:"1px solid var(--border)",
+              borderRadius:10, padding:"9px 15px", fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+            Clear
+          </button>
+          <div style={{ display:"flex", gap:9 }}>
+            <button onMouseDown={e=>{e.stopPropagation();doTest();}}
+              disabled={testState==="testing"}
+              style={{ background:"var(--btn-bg)", color:"var(--text)", border:"1px solid var(--border)",
+                borderRadius:10, padding:"9px 15px", fontSize:13, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+              Test
+            </button>
+            <button onMouseDown={e=>{e.stopPropagation();doSave();}}
+              style={{ background:"var(--accent)", color:"#fff", border:"none",
+                borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App() {
   const tod = timeOfDayLabel();
@@ -1285,6 +1401,16 @@ function App() {
     try { localStorage.setItem(TUTORIAL_KEY, "1"); } catch(e) {}
     setShowTutorial(false);
   };
+
+  // AI settings — the Groq API key lives only in this device's localStorage
+  const [apiKey, setApiKey] = useState(() => getGroqKey());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const handleSaveKey  = (k) => { saveGroqKey(k); setApiKey(k); };
+  const handleClearKey = () => { clearGroqKey(); setApiKey(""); };
+  // First run: once the tutorial is dismissed, prompt for a key if none is set
+  useEffect(() => {
+    if (!showTutorial && !apiKey) setSettingsOpen(true);
+  }, [showTutorial]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [chatHistory]);
 
@@ -1538,7 +1664,7 @@ For the recurrence field, detect any repetition in the speech:
     // Defer 50ms so React renders the loading spinner before the synchronous Java call blocks JS
     setTimeout(() => {
       try {
-        const raw = window.AndroidRecorder.stopAndTranscribe(GROQ_API_KEY);
+        const raw = window.AndroidRecorder.stopAndTranscribe(getGroqKey());
         const result = JSON.parse(raw);
         if (result.text && result.text.trim()) {
           processVoiceTranscript(result.text.trim());
@@ -1659,6 +1785,14 @@ For the recurrence field, detect any repetition in the speech:
           </div>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
             <div style={{ display:"flex", gap:6 }}>
+              <button onClick={()=>setSettingsOpen(true)}
+                style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12, position:"relative",
+                  borderColor: apiKey ? "var(--border)" : "var(--accent)" }}
+                title={apiKey ? "AI settings" : "Add your API key to enable AI"}>
+                ⚙️
+                {!apiKey && <span style={{ position:"absolute", top:6, right:6, width:8, height:8,
+                  borderRadius:"50%", background:"var(--accent)", boxShadow:"0 0 0 2px var(--header-bg)" }} />}
+              </button>
               <button onClick={()=>setShowTutorial(true)}
                 style={{ ...iconBtn, fontSize:18, width:42, height:42, borderRadius:12 }}
                 title="Help / Tutorial">❓</button>
@@ -2030,6 +2164,7 @@ For the recurrence field, detect any repetition in the speech:
         {/* Add Task Modal — rendered at top level, not inside any overflow:hidden parent */}
         {addOpen && <AddTaskModal onClose={()=>setAddOpen(false)} onAdd={addTask} />}
         {editTask && <EditTaskModal task={editTask} onClose={()=>setEditTask(null)} onSave={saveEditedTask} />}
+        {settingsOpen && <SettingsModal initialKey={apiKey} onClose={()=>setSettingsOpen(false)} onSave={handleSaveKey} onClear={handleClearKey} />}
       </div>
     </>
   );

@@ -47,17 +47,10 @@ public class MainActivity extends AppCompatActivity {
     private PermissionRequest pendingPermissionRequest;
 
     // ── Groq API bridge (static — no Activity reference) ──────────────────────
+    // The API key is supplied by the web layer (entered by the user in-app and
+    // stored only in the device's localStorage); it is passed in per request and
+    // never stored natively or baked into the APK.
     static class ApiBridge {
-
-        /**
-         * Returns the Groq API key baked into the APK at build time.
-         * The value comes from local.properties → BuildConfig.GROQ_API_KEY,
-         * so it is never committed to source control.
-         */
-        @JavascriptInterface
-        public String getApiKey() {
-            return BuildConfig.GROQ_API_KEY != null ? BuildConfig.GROQ_API_KEY : "";
-        }
 
         @JavascriptInterface
         public String groqPost(String apiKey, String body) {
