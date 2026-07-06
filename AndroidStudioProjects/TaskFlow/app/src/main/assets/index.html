@@ -238,12 +238,18 @@ function cancelTaskNotification(taskId) {
 }
 
 // ── AI ────────────────────────────────────────────────────────────────────────
-// ── Groq API key — get your FREE key at console.groq.com → API Keys ──────────
-const GROQ_API_KEY = "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";
+// ── Groq API key — supplied by the Android layer at build time ──────────────
+// On Android the key is baked into the APK via BuildConfig (from local.properties)
+// and read through the native bridge, so it never lives in this committed file.
+// For browser/PC testing you can temporarily paste a key into BROWSER_TEST_KEY.
+const BROWSER_TEST_KEY = "";
+const GROQ_API_KEY = (window.Android && window.Android.getApiKey)
+  ? (window.Android.getApiKey() || "").trim()
+  : BROWSER_TEST_KEY.trim();
 
 async function askClaude(messages, system) {
   if (!GROQ_API_KEY || GROQ_API_KEY === "YOUR_GROQ_KEY_HERE") {
-    return "⚠️ No API key set. Open index.html and replace YOUR_GROQ_KEY_HERE with your free key from console.groq.com";
+    return "⚠️ No API key configured. Add GROQ_API_KEY=your_key to local.properties and rebuild the app (get a free key at console.groq.com).";
   }
 
   const systemMsg = {

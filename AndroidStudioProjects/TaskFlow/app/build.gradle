@@ -2,6 +2,21 @@ plugins {
     id 'com.android.application'
 }
 
+// ── Load the Groq API key from local.properties (git-ignored, never committed) ──
+// Add a line   GROQ_API_KEY=gsk_your_new_key   to local.properties.
+// It gets baked into the APK at build time via BuildConfig.GROQ_API_KEY.
+def groqApiKey = ""
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    def localProps = new Properties()
+    localProps.load(new FileInputStream(localPropsFile))
+    groqApiKey = localProps.getProperty("GROQ_API_KEY", "")
+}
+// Fallback to a Gradle property or environment variable (useful for CI builds).
+if (groqApiKey?.isEmpty()) {
+    groqApiKey = (project.findProperty("GROQ_API_KEY") ?: System.getenv("GROQ_API_KEY") ?: "").toString()
+}
+
 android {
     namespace 'com.taskflow.app'
     compileSdk 34
@@ -12,6 +27,9 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        // Exposed to Java as BuildConfig.GROQ_API_KEY
+        buildConfigField "String", "GROQ_API_KEY", "\"${groqApiKey}\""
     }
 
     buildTypes {
@@ -31,6 +49,7 @@ android {
 
     buildFeatures {
         // viewBinding not needed for WebView-only activity
+        buildConfig true
     }
 }
 

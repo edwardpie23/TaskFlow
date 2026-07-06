@@ -49,6 +49,16 @@ public class MainActivity extends AppCompatActivity {
     // ── Groq API bridge (static — no Activity reference) ──────────────────────
     static class ApiBridge {
 
+        /**
+         * Returns the Groq API key baked into the APK at build time.
+         * The value comes from local.properties → BuildConfig.GROQ_API_KEY,
+         * so it is never committed to source control.
+         */
+        @JavascriptInterface
+        public String getApiKey() {
+            return BuildConfig.GROQ_API_KEY != null ? BuildConfig.GROQ_API_KEY : "";
+        }
+
         @JavascriptInterface
         public String groqPost(String apiKey, String body) {
             String cleanKey = apiKey == null ? "" : apiKey.trim();
