@@ -1,0 +1,52 @@
+name: Build Debug APK
+
+# Builds an installable debug APK on GitHub's runners (which can reach Google's
+# Android SDK/Maven servers). After a run finishes, download the APK from the
+# run's "Artifacts" section. Triggers automatically on pushes to the claude/*
+# and main branches, and can also be started manually from the Actions tab.
+on:
+  push:
+    branches:
+      - "claude/**"
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The Android project lives in this subfolder of the repo.
+        working-directory: AndroidStudioProjects/TaskFlow
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskFlow-debug-apk
+          # Paths for upload-artifact are relative to the repo root, not the
+          # working-directory above.
+          path: AndroidStudioProjects/TaskFlow/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
